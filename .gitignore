@@ -1,6 +1,9 @@
 /.claude
+/.venv
 /paper
 /rl_big_worlds_research_ideas.txt
 /log
 /outputs
 /private
+/plots
+/results
