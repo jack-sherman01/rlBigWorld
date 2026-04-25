@@ -83,6 +83,6 @@ temp/
 /log
 /outputs
 /private
-/plots
-/results
+palr_plasticity_aware_lr/plots
+palr_plasticity_aware_lr/results
 palr_plasticity_aware_lr/RESULTS_SUMMARY.txt
