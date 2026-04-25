@@ -8,7 +8,7 @@ Task phases cycle through different gravity and pole-mass configurations.
 This tests an agent's ability to maintain plasticity across distribution shifts.
 """
 
-import gymnasium as gym
+import gym
 import numpy as np
 
 

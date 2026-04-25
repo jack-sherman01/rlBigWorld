@@ -66,13 +66,44 @@ def make_agents(seed):
     ]
 
 
-def run_all(n_episodes: int, n_seeds: int, episodes_per_task: int):
+def save_checkpoint(all_results, n_episodes, n_seeds, episodes_per_task,
+                    ckpt_suffix=""):
+    """Save incremental checkpoint after each seed.
+
+    ckpt_suffix: appended before .json so parallel workers don't clobber each
+    other (e.g. "_seed0", "_seed3").
+    """
+    def to_serialisable(obj):
+        if isinstance(obj, np.ndarray): return obj.tolist()
+        if isinstance(obj, (np.integer,)): return int(obj)
+        if isinstance(obj, (np.floating,)): return float(obj)
+        if isinstance(obj, dict): return {k: to_serialisable(v) for k, v in obj.items()}
+        if isinstance(obj, list): return [to_serialisable(i) for i in obj]
+        return obj
+    fname = f"raw_results_checkpoint{ckpt_suffix}.json"
+    ckpt_path = os.path.join(RESULTS_DIR, fname)
+    with open(ckpt_path, "w") as f:
+        json.dump(to_serialisable(all_results), f)
+    print(f"  [checkpoint saved → {ckpt_path}]")
+
+
+def run_all(n_episodes: int, n_seeds: int, episodes_per_task: int,
+            seed_offset_start: int = 0, ckpt_suffix: str = ""):
     all_results = {}  # agent_name -> list of per-seed result dicts
 
-    for seed_offset in range(n_seeds):
+    # Load existing checkpoint if resuming
+    fname = f"raw_results_checkpoint{ckpt_suffix}.json"
+    ckpt_path = os.path.join(RESULTS_DIR, fname)
+    if seed_offset_start > 0 and os.path.exists(ckpt_path):
+        with open(ckpt_path) as f:
+            all_results = json.load(f)
+        print(f"Loaded checkpoint with {sum(len(v) for v in all_results.values())} runs "
+              f"from {ckpt_path}")
+
+    for seed_offset in range(seed_offset_start, seed_offset_start + n_seeds):
         seed = 42 + seed_offset * 13
         print(f"\n{'='*60}")
-        print(f"SEED {seed_offset + 1}/{n_seeds}  (seed={seed})")
+        print(f"SEED {seed_offset + 1}/{seed_offset_start + n_seeds}  (seed={seed})")
         print(f"{'='*60}")
         agents = make_agents(seed)
 
@@ -89,6 +120,10 @@ def run_all(n_episodes: int, n_seeds: int, episodes_per_task: int):
             if agent.name not in all_results:
                 all_results[agent.name] = []
             all_results[agent.name].append(result)
+
+        # Save checkpoint after every seed
+        save_checkpoint(all_results, n_episodes, n_seeds, episodes_per_task,
+                        ckpt_suffix=ckpt_suffix)
 
     return all_results
 
@@ -192,6 +227,11 @@ if __name__ == "__main__":
                         help="Episodes before task switch")
     parser.add_argument("--fast", action="store_true",
                         help="Quick run: 400 episodes, 1 seed")
+    parser.add_argument("--seed_offset", type=int, default=0,
+                        help="Start from this seed index (0-based). Use to resume after interruption.")
+    parser.add_argument("--ckpt_suffix", type=str, default="",
+                        help="Suffix appended to checkpoint filename (e.g. '_seed0'). "
+                             "Allows parallel workers to write separate checkpoint files.")
     args = parser.parse_args()
 
     if args.fast:
@@ -203,10 +243,11 @@ if __name__ == "__main__":
         n_seeds = args.seeds
         ept     = args.episodes_per_task
 
-    print(f"Running: {n_ep} episodes, {n_seeds} seed(s), {ept} ep/task")
+    print(f"Running: {n_ep} episodes, {n_seeds} seed(s), {ept} ep/task, seed_offset={args.seed_offset}")
     print(f"Results will be saved to: {RESULTS_DIR}\n")
 
-    all_results = run_all(n_ep, n_seeds, ept)
+    all_results = run_all(n_ep, n_seeds, ept, seed_offset_start=args.seed_offset,
+                          ckpt_suffix=args.ckpt_suffix)
     summary     = save_results(all_results, n_ep, n_seeds, ept)
     print_summary_table(summary)
     print("\nDone. Run plot_results.py to generate figures.")

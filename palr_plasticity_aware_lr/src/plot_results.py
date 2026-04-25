@@ -147,7 +147,7 @@ def plot_phase_bars(summary):
 
     task_names = ["Default", "Heavy-Slow", "Light-Fast", "Default-Heavy"]
     ax.set_xticks(x)
-    ax.set_xticklabels([f"Phase {i+1}\n({task_names[i]})"
+    ax.set_xticklabels([f"Phase {i+1}\n({task_names[i % len(task_names)]})"
                         for i in range(n_phases)], fontsize=9)
     ax.set_ylabel("Mean Episode Reward", fontsize=12)
     ax.set_title("Per-Phase Performance Comparison", fontsize=13)
@@ -304,6 +304,181 @@ def plot_recovery_speed(summary):
     print(f"Saved {path}")
 
 
+# ── Figure 6: LR-Scale Control Loop ──────────────────────────────────────────
+def plot_lr_scale_control_loop(raw):
+    """
+    Three-panel figure for full PALR showing the closed-loop relationship
+    between effective rank (observation) and LR scale (control action).
+
+    Panel 1: Per-layer LR scale factor over training steps
+    Panel 2: Per-layer effective rank over training steps
+    Panel 3: Per-layer dead neuron fraction over training steps
+
+    The inverse correlation between rank and LR scale is the empirical
+    demonstration that rank is used as an online control signal.
+    """
+    palr_runs = raw.get("PALR (ours)", [])
+    if not palr_runs:
+        print("No PALR (ours) data found for Figure 6.")
+        return
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
+
+    layer_colors = {"l0": "#1f77b4", "l1": "#d62728"}  # blue, red
+
+    for run in palr_runs:
+        hist = run.get("palr_plasticity_history", [])
+        if not hist:
+            continue
+        steps    = [h["step"]         for h in hist]
+        scale_l0 = [h["lr_scale_l0"]  for h in hist]
+        scale_l1 = [h["lr_scale_l1"]  for h in hist]
+        erank_l0 = [h["erank_l0"]     for h in hist]
+        erank_l1 = [h["erank_l1"]     for h in hist]
+        dead_l0  = [h["dead_l0"]      for h in hist]
+        dead_l1  = [h["dead_l1"]      for h in hist]
+
+        axes[0].plot(steps, scale_l0, color=layer_colors["l0"],
+                     alpha=0.7, linewidth=1.2, label="Layer 1")
+        axes[0].plot(steps, scale_l1, color=layer_colors["l1"],
+                     alpha=0.7, linewidth=1.2, label="Layer 2")
+        axes[1].plot(steps, erank_l0, color=layer_colors["l0"],
+                     alpha=0.7, linewidth=1.2)
+        axes[1].plot(steps, erank_l1, color=layer_colors["l1"],
+                     alpha=0.7, linewidth=1.2)
+        axes[2].plot(steps, dead_l0, color=layer_colors["l0"],
+                     alpha=0.7, linewidth=1.2)
+        axes[2].plot(steps, dead_l1, color=layer_colors["l1"],
+                     alpha=0.7, linewidth=1.2)
+
+    # Task-switch lines (use episode boundaries; steps ≈ episodes × steps/episode)
+    sample_run = palr_runs[0]
+    switch_eps = sample_run.get("task_switch_episodes", [])
+    hist = sample_run.get("palr_plasticity_history", [])
+    if hist and switch_eps:
+        # Estimate steps per episode from the history
+        total_steps = hist[-1]["step"] if hist else 0
+        n_eps = len(sample_run.get("episode_rewards", [])) or 1
+        steps_per_ep = total_steps / n_eps
+        for sw in switch_eps:
+            sw_step = sw * steps_per_ep
+            for ax in axes:
+                ax.axvline(sw_step, color="gray", linestyle="--",
+                           linewidth=0.9, alpha=0.7)
+
+    axes[0].set_ylabel("LR Scale Factor $s^{(l)}$", fontsize=11)
+    axes[0].set_title(
+        "PALR Control Loop: Rank Deficit Drives LR Scale (online, per-layer)",
+        fontsize=12)
+    axes[0].axhline(1.0, color="black", linestyle=":", linewidth=0.8, alpha=0.5)
+    axes[0].legend(fontsize=9)
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].set_ylabel("Effective Rank $\\rho^{(l)}$", fontsize=11)
+    axes[1].grid(True, alpha=0.3)
+
+    axes[2].set_ylabel("Dead Neuron Fraction $\\delta^{(l)}$", fontsize=11)
+    axes[2].set_xlabel("Training Step", fontsize=11)
+    axes[2].set_ylim(bottom=0)
+    axes[2].grid(True, alpha=0.3)
+
+    # Shared task-switch label
+    axes[0].text(0.01, 0.95, "↕ task switches", transform=axes[0].transAxes,
+                 fontsize=8, color="gray", va="top")
+
+    plt.tight_layout()
+    path = os.path.join(PLOTS_DIR, "fig6_lr_scale_control_loop.png")
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"Saved {path}")
+
+
+# ── Figure 7: Re-death Rate ───────────────────────────────────────────────────
+def plot_redeath_rate(raw):
+    """
+    Compare re-death rate (fraction of perturbed neurons that are dead again
+    at the next measurement) between full PALR and PALR-NoScale.
+
+    - Full PALR: LR boost after perturbation → revived neurons consolidate fast
+    - PALR-NoScale: no LR boost → revived neurons are fragile, high re-death rate
+
+    This directly validates the revival-consolidation loop claim.
+    """
+    agents_to_plot = {
+        "PALR (ours)":   "#2ca02c",
+        "PALR-NoScale":  "#17becf",
+    }
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+    layer_labels = ["Layer 1", "Layer 2"]
+    rate_keys    = ["redeath_rate_l0", "redeath_rate_l1"]
+
+    for ax, rkey, llabel in zip(axes, rate_keys, layer_labels):
+        for name, color in agents_to_plot.items():
+            runs = raw.get(name, [])
+            all_rates = []
+            all_steps = []
+            for run in runs:
+                hist = run.get("palr_plasticity_history", [])
+                for h in hist:
+                    r = h.get(rkey, 0.0)
+                    all_rates.append(r)
+                    all_steps.append(h["step"])
+
+            if not all_steps:
+                continue
+
+            # Bin by step and average across seeds
+            max_step = max(all_steps)
+            n_bins   = 30
+            bin_edges = np.linspace(0, max_step, n_bins + 1)
+            bin_means = []
+            bin_centers = []
+            for b in range(n_bins):
+                mask = [(bin_edges[b] <= s < bin_edges[b+1])
+                        for s in all_steps]
+                if any(mask):
+                    bin_means.append(
+                        np.mean([all_rates[j] for j, m in enumerate(mask) if m])
+                    )
+                    bin_centers.append((bin_edges[b] + bin_edges[b+1]) / 2)
+
+            ax.plot(bin_centers, bin_means, color=color, linewidth=1.8,
+                    label=name)
+            ax.fill_between(bin_centers, 0, bin_means, alpha=0.15, color=color)
+
+        # Task switch lines
+        sample_run = (raw.get("PALR (ours)") or raw.get("PALR-NoScale") or [[]])[0]
+        switch_eps = sample_run.get("task_switch_episodes", [])
+        hist = sample_run.get("palr_plasticity_history", [])
+        if hist and switch_eps:
+            total_steps = hist[-1]["step"]
+            n_eps = len(sample_run.get("episode_rewards", [])) or 1
+            steps_per_ep = total_steps / n_eps
+            for sw in switch_eps:
+                ax.axvline(sw * steps_per_ep, color="gray", linestyle="--",
+                           linewidth=0.8, alpha=0.7)
+
+        ax.set_title(f"Re-death Rate — {llabel}", fontsize=11)
+        ax.set_xlabel("Training Step", fontsize=10)
+        ax.set_ylim(bottom=0, top=1.05)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=9)
+
+    axes[0].set_ylabel("Re-death Rate\n(fraction of revived neurons dead again)", fontsize=10)
+
+    fig.suptitle(
+        "Revival-Consolidation Loop: Re-death Rate After Perturbation\n"
+        "Full PALR (LR boost) vs PALR-NoScale (no LR boost)",
+        fontsize=12
+    )
+    plt.tight_layout()
+    path = os.path.join(PLOTS_DIR, "fig7_redeath_rate.png")
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"Saved {path}")
+
+
 if __name__ == "__main__":
     print("Loading results...")
     raw, summary = load_results()
@@ -314,5 +489,7 @@ if __name__ == "__main__":
     plot_plasticity_dynamics(raw)
     plot_ablation(summary)
     plot_recovery_speed(summary)
+    plot_lr_scale_control_loop(raw)
+    plot_redeath_rate(raw)
 
     print(f"\nAll figures saved to: {PLOTS_DIR}")

@@ -94,10 +94,19 @@ def train_agent(
             )
 
     env.close()
-    return {
+
+    result = {
         "agent_name":           agent.name,
         "episode_rewards":      episode_rewards,
         "task_ids":             task_ids,
         "task_switch_episodes": env.task_switch_episodes,
         "plasticity_log":       plasticity_log,
     }
+
+    # Export per-measurement-step plasticity history from PALR agents.
+    # This includes lr_scale_l0/l1, erank_l0/l1, redeath_rate_l0/l1 — used
+    # for the LR-scale control-loop figure and the re-death rate figure.
+    if hasattr(agent, "plasticity_history"):
+        result["palr_plasticity_history"] = agent.plasticity_history
+
+    return result
