@@ -124,3 +124,12 @@ TASK_CONFIG:
     HEAD_DEPTH_SENSOR:
       WIDTH:  128
       HEIGHT: 128
+
+# Keys to look up per-episode success in habitat info dict.
+# Names depend on which RearrangeTask measurement is registered.
+# The trainer will use the first matching key it finds.
+SUCCESS_MEASURE_KEYS:
+  - "rearrange_pick_success"
+  - "rearrange_place_success"
+  - "rearrange_open_fridge_success"
+  - "success"

@@ -248,6 +248,16 @@ class PALRDDPPOTrainer:
         self.seed       = args.seed
         self.outdir     = args.outdir
 
+        self.success_keys = self.cfg.get(
+            "SUCCESS_MEASURE_KEYS",
+            [
+                "rearrange_pick_success",
+                "rearrange_place_success",
+                "rearrange_open_fridge_success",
+                "success",  # fallback
+            ],
+        )
+
         os.makedirs(self.outdir, exist_ok=True)
         os.makedirs(f"{self.outdir}/checkpoints", exist_ok=True)
 
@@ -274,6 +284,13 @@ class PALRDDPPOTrainer:
             lr   = self.ppo_cfg["lr"],
             eps  = self.ppo_cfg["eps"],
         )
+
+    def _extract_success(self, info: dict) -> float:
+        """Return the first matching success measurement from habitat info."""
+        for key in self.success_keys:
+            if key in info:
+                return float(info[key])
+        return 0.0
 
     # ── PPO update ─────────────────────────────────────────────────────────────
 
@@ -455,6 +472,9 @@ class PALRDDPPOTrainer:
         total_env_steps = 0
         t_start = time.time()
 
+        # Per-env accumulators for episode returns (reset at done boundaries)
+        running_ep_returns = np.zeros(self.num_envs, dtype=np.float32)
+
         while total_env_steps < self.total_steps:
 
             # ── Curriculum switch check ────────────────────────────────────────
@@ -471,6 +491,9 @@ class PALRDDPPOTrainer:
                         rollouts.obs[k][0].copy_(t)
                     rnn_hidden = torch.zeros(1, self.num_envs, hidden_size, device=self.device)
                     masks      = torch.ones(self.num_envs, 1, device=self.device)
+
+                    # Reset per-env return accumulators when environments are restarted
+                    running_ep_returns[:] = 0.0
 
                     # PALR proactive boost at task switch
                     palr_state.lr_scales = np.clip(palr_state.lr_scales, 2.0, palr_state.max_lr_scale)
@@ -514,10 +537,14 @@ class PALRDDPPOTrainer:
                         rnn_hidden      = rnn_hidden,
                     )
 
+                    # Accumulate per-env episode returns
+                    running_ep_returns += np.asarray(rewards, dtype=np.float32).reshape(self.num_envs)
+
                     for i, (done, info) in enumerate(zip(dones, infos)):
                         if done:
-                            episode_rewards.append(float(info.get("episode", {}).get("r", 0.0)))
-                            episode_successes.append(float(info.get("success", 0.0)))
+                            episode_rewards.append(float(running_ep_returns[i]))
+                            episode_successes.append(self._extract_success(info))
+                            running_ep_returns[i] = 0.0
 
                     total_env_steps += self.num_envs
                     curriculum.step(self.num_envs)
