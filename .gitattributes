@@ -1,0 +1,27 @@
+# Force LF line endings for shell scripts and other Unix-only text files
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Common config / source files: keep LF
+*.py   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.cfg  text eol=lf
+*.toml text eol=lf
+
+# Binary files (don't touch)
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.mp4  binary
+*.glb  binary
+*.gz   binary
+*.zip  binary
+*.tar  binary
+*.pt   binary
+*.pth  binary
+*.npz  binary
+*.npy  binary
