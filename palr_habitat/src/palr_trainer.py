@@ -464,6 +464,17 @@ class PALRDDPPOTrainer:
             and is not needed for our use case.
             """
             import habitat
+            # ── DEBUG: instantiate one env in-process so worker exceptions
+            #          aren't swallowed by VectorEnv's pipe and we can see
+            #          the real traceback.  Remove once stable.
+            if os.environ.get("PALR_DEBUG_SINGLE_ENV", "0") == "1":
+                probe = _make_single_env(task_type, dataset_path,
+                                         self.seed, self.rank, 0)
+                print("[PALR-DEBUG] single env OK; "
+                      f"obs_space={probe.observation_space} "
+                      f"action_space={probe.action_space}",
+                      flush=True)
+                probe.close()
             env_fn_args = [
                 (task_type, dataset_path, self.seed, self.rank, i)
                 for i in range(self.num_envs)
