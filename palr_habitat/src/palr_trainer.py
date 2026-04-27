@@ -134,11 +134,16 @@ class RolloutStorage:
 
 # ── VectorEnv wrapper ─────────────────────────────────────────────────────────
 
-# Path to the habitat task config that is loaded inside each worker.
-# Resolved relative to this file so workers don't depend on CWD.
-_BASE_TASK_CONFIG = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "configs", "rearrange_base.yaml")
-)
+# Map task_type strings → bundled habitat hydra configs (shipped inside the
+# installed habitat-lab package: habitat/config/benchmark/rearrange/*.yaml).
+# habitat-lab >= 0.2.3 uses a hydra-based config system, so we cannot point
+# `habitat.get_config` at an arbitrary local YAML — it must be a path that
+# the bundled hydra search path can resolve.
+_TASK_TO_CONFIG = {
+    "RearrangePickTask-v0":       "benchmark/rearrange/pick.yaml",
+    "RearrangePlaceTask-v0":      "benchmark/rearrange/place.yaml",
+    "RearrangeOpenFridgeTask-v0": "benchmark/rearrange/open_fridge.yaml",
+}
 
 
 def _make_single_env(task_type: str, dataset_path: str,
@@ -149,16 +154,24 @@ def _make_single_env(task_type: str, dataset_path: str,
     by habitat.VectorEnv's worker processes.
     """
     import habitat
-    cfg = habitat.get_config(_BASE_TASK_CONFIG)
-    cfg.defrost()
-    cfg.ENVIRONMENT.MAX_EPISODE_STEPS = 200
-    cfg.TASK.TYPE = task_type
-    cfg.DATASET.DATA_PATH = dataset_path
-    cfg.SIMULATOR.HABITAT_SIM_V0.GPU_DEVICE_ID = rank
-    cfg.SIMULATOR.SEED = seed + rank * 1000 + env_idx
-    cfg.DATASET.SPLIT = "train"
-    cfg.freeze()
-    return habitat.Env(cfg)
+    from habitat.config.read_write import read_write
+
+    config_path = _TASK_TO_CONFIG.get(task_type)
+    if config_path is None:
+        raise ValueError(
+            f"Unsupported task_type {task_type!r}; "
+            f"add it to _TASK_TO_CONFIG."
+        )
+
+    cfg = habitat.get_config(config_path)
+    with read_write(cfg):
+        cfg.habitat.environment.max_episode_steps = 200
+        cfg.habitat.dataset.data_path = dataset_path
+        cfg.habitat.dataset.split = "train"
+        cfg.habitat.simulator.habitat_sim_v0.gpu_device_id = rank
+        cfg.habitat.simulator.seed = seed + rank * 1000 + env_idx
+    # habitat.Env in the new API expects the inner `habitat` sub-tree.
+    return habitat.Env(config=cfg.habitat)
 
 
 def make_env_fn(task_type: str, dataset_path: str, seed: int, rank: int, env_idx: int):
