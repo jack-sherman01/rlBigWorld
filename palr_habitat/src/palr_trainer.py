@@ -644,6 +644,14 @@ class PALRDDPPOTrainer:
         # Per-env accumulators for episode returns (reset at done boundaries)
         running_ep_returns = np.zeros(self.num_envs, dtype=np.float32)
 
+        if self.is_main:
+            print(f"[PALR] entering training loop: "
+                  f"num_steps_per_rollout={self.num_steps} "
+                  f"num_envs={self.num_envs} "
+                  f"total_steps_budget={self.total_steps}",
+                  flush=True)
+        heartbeat_every = int(os.environ.get("PALR_HEARTBEAT_EVERY", "32"))
+
         while total_env_steps < self.total_steps:
 
             # ── Curriculum switch check ────────────────────────────────────────
@@ -669,6 +677,10 @@ class PALRDDPPOTrainer:
 
             # ── Rollout collection ─────────────────────────────────────────────
             policy.eval()
+            rollout_t0 = time.time()
+            if self.is_main:
+                print(f"[PALR] update {update_idx}: starting rollout "
+                      f"(env_steps so far={total_env_steps})", flush=True)
             with torch.no_grad():
                 for step in range(self.num_steps):
                     obs_b = {k: rollouts.obs[k][step] for k in obs_shapes}
@@ -688,6 +700,16 @@ class PALRDDPPOTrainer:
                     # of length num_envs — must zip-unpack into 4 columns.
                     step_results = envs.step(actions_np)
                     obs_list, rewards, dones, infos = zip(*step_results)
+
+                    if self.is_main and heartbeat_every > 0 and \
+                            (step % heartbeat_every == 0 or step == self.num_steps - 1):
+                        elapsed = time.time() - rollout_t0
+                        sps = (step + 1) * self.num_envs / max(elapsed, 1e-6)
+                        print(f"[PALR]   rollout step {step+1}/{self.num_steps} "
+                              f"elapsed={elapsed:.1f}s sps={sps:.1f} "
+                              f"r_last={float(np.mean(rewards)):.3f} "
+                              f"done_n={int(np.sum(dones))}",
+                              flush=True)
 
                     reward_t = torch.tensor(rewards, dtype=torch.float32,
                                             device=self.device).unsqueeze(1)
@@ -753,6 +775,12 @@ class PALRDDPPOTrainer:
             )
             rollouts.after_update()
             update_idx += 1
+
+            if self.is_main:
+                print(f"[PALR] update {update_idx} done; "
+                      f"total_env_steps={total_env_steps} "
+                      f"loss={ppo_logs.get('policy_loss', float('nan')):.4f}",
+                      flush=True)
 
             # ── Logging ────────────────────────────────────────────────────────
             log_interval = self.cfg.get("LOG_INTERVAL", 10)
