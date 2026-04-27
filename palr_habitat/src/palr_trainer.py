@@ -134,20 +134,30 @@ class RolloutStorage:
 
 # ── VectorEnv wrapper ─────────────────────────────────────────────────────────
 
+def _make_single_env(task_type: str, dataset_path: str,
+                     seed: int, rank: int, env_idx: int):
+    """Construct a single habitat.Env for habitat.VectorEnv.
+
+    This is a top-level function (not a closure) so it can be pickled
+    by habitat.VectorEnv's worker processes.
+    """
+    import habitat
+    cfg = habitat.get_config()
+    cfg.defrost()
+    cfg.ENVIRONMENT.MAX_EPISODE_STEPS = 200
+    cfg.TASK.TYPE = task_type
+    cfg.DATASET.DATA_PATH = dataset_path
+    cfg.SIMULATOR.HABITAT_SIM_V0.GPU_DEVICE_ID = rank
+    cfg.SIMULATOR.SEED = seed + rank * 1000 + env_idx
+    cfg.DATASET.SPLIT = "train"
+    cfg.freeze()
+    return habitat.Env(cfg)
+
+
 def make_env_fn(task_type: str, dataset_path: str, seed: int, rank: int, env_idx: int):
-    """Returns a callable that creates one habitat env."""
+    """Returns a callable that creates one habitat env (legacy helper)."""
     def _init():
-        import habitat
-        cfg = habitat.get_config()
-        cfg.defrost()
-        cfg.ENVIRONMENT.MAX_EPISODE_STEPS = 200
-        cfg.TASK.TYPE = task_type
-        cfg.DATASET.DATA_PATH = dataset_path
-        cfg.SIMULATOR.HABITAT_SIM_V0.GPU_DEVICE_ID = rank
-        cfg.SIMULATOR.SEED = seed + rank * 1000 + env_idx
-        cfg.DATASET.SPLIT = "train"
-        cfg.freeze()
-        return habitat.Env(cfg)
+        return _make_single_env(task_type, dataset_path, seed, rank, env_idx)
     return _init
 
 
@@ -426,22 +436,22 @@ class PALRDDPPOTrainer:
         phase = curriculum.current_phase
 
         def make_envs(task_type, dataset_path):
+            """Build a habitat.VectorEnv with `self.num_envs` parallel envs.
+
+            Uses habitat.VectorEnv directly (rather than
+            habitat_baselines.utils.env_utils.construct_envs) because the
+            latter's signature has changed across habitat-baselines versions
+            and is not needed for our use case.
+            """
             import habitat
-            from habitat.utils.env_utils import construct_envs, make_env_fn
-            from habitat import Config
-            cfgs = []
-            for i in range(self.num_envs):
-                c = habitat.get_config()
-                c.defrost()
-                c.ENVIRONMENT.MAX_EPISODE_STEPS = 200
-                c.TASK.TYPE = task_type
-                c.DATASET.DATA_PATH = dataset_path
-                c.DATASET.SPLIT = "train"
-                c.SIMULATOR.HABITAT_SIM_V0.GPU_DEVICE_ID = self.rank
-                c.SIMULATOR.SEED = self.seed + self.rank * 1000 + i
-                c.freeze()
-                cfgs.append(c)
-            return construct_envs(cfgs, make_env_fn)
+            env_fn_args = [
+                (task_type, dataset_path, self.seed, self.rank, i)
+                for i in range(self.num_envs)
+            ]
+            return habitat.VectorEnv(
+                make_env_fn=_make_single_env,
+                env_fn_args=env_fn_args,
+            )
 
         envs = make_envs(phase.task_type, phase.dataset_path)
 

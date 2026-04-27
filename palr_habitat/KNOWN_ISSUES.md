@@ -37,39 +37,32 @@ dataset: "data/datasets/rearrange/sink_place_train.json.gz"
 
 ---
 
-### 问题 2：Task 名称未验证
+### 问题 2：Task 名称未验证 ✅ 已验证
 
 **位置**：两个 YAML configs 里
 
-以下 task 名称不确定是否在 habitat-lab 0.2.5 中注册：
+以下 task 名称在 habitat-lab 0.2.5 中均已注册，可直接使用：
 ```yaml
-RearrangeOpenFridgeTask-v0
-RearrangePlaceTask-v0
+RearrangePickTask-v0       # habitat/tasks/rearrange/sub_tasks/pick_task.py
+RearrangePlaceTask-v0      # habitat/tasks/rearrange/sub_tasks/place_task.py
+RearrangeOpenFridgeTask-v0 # habitat/tasks/rearrange/sub_tasks/articulated_object_task.py
 ```
 
-**验证方法**：
+设置好 conda 环境后可再次验证：
 ```bash
 conda activate palr_habitat
 python -c "import habitat; print(list(habitat.registry._task_map.keys()))"
 ```
-对照输出，把 YAML 里的 task 名改成实际存在的。
 
 ---
 
-### 问题 3：`palr_trainer.py` 里的 habitat API 路径错误
+### 问题 3：`palr_trainer.py` 里的 habitat API 路径错误 ✅ 已修复
 
 **位置**：`src/palr_trainer.py`，`make_envs()` 函数
 
-```python
-# 错误（此路径在 habitat-lab 0.2.5 中不存在）：
-from habitat.utils.env_utils import construct_envs, make_env_fn
-
-# 正确应为：
-from habitat_baselines.utils.env_utils import construct_envs
-```
-
-另外 `construct_envs` 的调用接口与当前代码不一致，需要参照
-`habitat_baselines/utils/env_utils.py` 的实际签名修改。
+原代码引用了不存在的 `habitat.utils.env_utils.construct_envs`，
+现已改为直接使用 `habitat.VectorEnv`，避免依赖
+`habitat_baselines` 跨版本不一致的 `construct_envs` 接口。
 
 ---
 
