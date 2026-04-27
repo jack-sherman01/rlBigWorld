@@ -684,7 +684,10 @@ class PALRDDPPOTrainer:
                     # kill workers when the policy samples slightly OOB.
                     actions_np = action.cpu().numpy().astype(np.float32)
                     actions_np = np.clip(actions_np, act_low, act_high)
-                    obs_list, rewards, dones, infos = envs.step(actions_np)
+                    # habitat.VectorEnv.step returns List[(obs, reward, done, info)]
+                    # of length num_envs — must zip-unpack into 4 columns.
+                    step_results = envs.step(actions_np)
+                    obs_list, rewards, dones, infos = zip(*step_results)
 
                     reward_t = torch.tensor(rewards, dtype=torch.float32,
                                             device=self.device).unsqueeze(1)
