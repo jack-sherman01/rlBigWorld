@@ -606,6 +606,13 @@ class PALRDDPPOTrainer:
         action_dim = act_space.shape[0]
         joint_dim  = obs_space["joint"].shape[0]
 
+        # Action bounds for clipping policy output before stepping the env.
+        # habitat's gym wrapper does a strict assert action_space.contains(a),
+        # so any sampled action drifting past the bounds (e.g. from a
+        # Normal-distribution policy head) crashes the worker.
+        act_low  = np.asarray(act_space.low,  dtype=np.float32)
+        act_high = np.asarray(act_space.high, dtype=np.float32)
+
         # ── Build policy and optimizer ────────────────────────────────────────
         policy    = self.build_policy(action_dim, joint_dim)
         optimizer = self.build_optimizer(policy)
@@ -672,8 +679,11 @@ class PALRDDPPOTrainer:
                     action = dist.sample()
                     action_log_prob = dist.log_prob(action).sum(-1, keepdim=True)
 
-                    # Step environments
-                    actions_np = action.cpu().numpy()
+                    # Step environments — clip to action_space bounds so the
+                    # habitat gym wrapper's strict contains() assert doesn't
+                    # kill workers when the policy samples slightly OOB.
+                    actions_np = action.cpu().numpy().astype(np.float32)
+                    actions_np = np.clip(actions_np, act_low, act_high)
                     obs_list, rewards, dones, infos = envs.step(actions_np)
 
                     reward_t = torch.tensor(rewards, dtype=torch.float32,
