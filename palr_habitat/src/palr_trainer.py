@@ -170,8 +170,11 @@ def _make_single_env(task_type: str, dataset_path: str,
         cfg.habitat.dataset.split = "train"
         cfg.habitat.simulator.habitat_sim_v0.gpu_device_id = rank
         cfg.habitat.simulator.seed = seed + rank * 1000 + env_idx
-    # habitat.Env in the new API expects the inner `habitat` sub-tree.
-    return habitat.Env(config=cfg.habitat)
+    # habitat.VectorEnv expects a GymHabitatEnv (it queries
+    # `original_action_space` etc.), so we go through habitat.gym instead of
+    # constructing habitat.Env directly.
+    from habitat.gym import make_gym_from_config
+    return make_gym_from_config(cfg)
 
 
 def make_env_fn(task_type: str, dataset_path: str, seed: int, rank: int, env_idx: int):
