@@ -147,7 +147,14 @@ class PALRSACAgent(SACAgent):
 
             if not self.no_scale:
                 combined = dead_deficit + self.rank_beta * rank_deficit
-                new_scales[k] = float(np.clip(1.0 + self.beta * combined, 1.0, 5.0))
+                # Normalise combined to [0, 1] then linearly map to
+                # [1, max_lr_scale].  Saturates only when fully degraded.
+                combined_norm = combined / (1.0 + self.rank_beta)
+                max_lr_scale = 5.0  # same hard-coded ceiling as before
+                new_scales[k] = float(
+                    1.0 + (max_lr_scale - 1.0)
+                    * float(np.clip(combined_norm, 0.0, 1.0))
+                )
 
             if not self.no_perturb and dead_k > self.perturb_threshold:
                 self._targeted_perturbation(k, obs_b, act_b)

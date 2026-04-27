@@ -209,13 +209,19 @@ def save_checkpoint(all_results, ckpt_suffix=""):
 
 def run_all(episodes_per_task: int, n_seeds: int, seed_offset_start: int = 0,
             ckpt_suffix: str = "", batch_size: int = 512,
-            reward_threshold: float = None):
+            reward_threshold: float = None, agent_idx: int = None):
+    """
+    Run all (or a single) agent across seeds.
 
+    If agent_idx is given, only that agent is run and results are saved to
+    cw_checkpoint{ckpt_suffix}.json keyed by agent name.
+    This allows launching each agent as a separate parallel process.
+    """
     all_results = {}
 
-    # Resume from existing checkpoint
+    # Resume from existing checkpoint (safe: each agent writes its own key)
     ckpt_path = os.path.join(RESULTS_DIR, f"cw_checkpoint{ckpt_suffix}.json")
-    if seed_offset_start > 0 and os.path.exists(ckpt_path):
+    if os.path.exists(ckpt_path):
         with open(ckpt_path) as f:
             all_results = json.load(f)
         print(f"Loaded checkpoint: {sum(len(v) for v in all_results.values())} runs")
@@ -235,7 +241,17 @@ def run_all(episodes_per_task: int, n_seeds: int, seed_offset_start: int = 0,
         n_episodes = episodes_per_task * len(CW10_TASKS)
         agents = make_agents(obs_dim, action_dim, seed, batch_size)
 
+        # Select only the requested agent (or all if agent_idx is None)
+        if agent_idx is not None:
+            agents = [agents[agent_idx]]
+
         for agent in agents:
+            # Skip if this agent+seed already has a result in the checkpoint
+            existing = all_results.get(agent.name, [])
+            if len(existing) > seed_offset - seed_offset_start:
+                print(f"\n--- {agent.name} [already done, skipping] ---")
+                continue
+
             print(f"\n--- {agent.name} ---")
             env = ContinualWorld(episodes_per_task=episodes_per_task, seed=seed)
             result = train_agent_cw(
@@ -250,7 +266,8 @@ def run_all(episodes_per_task: int, n_seeds: int, seed_offset_start: int = 0,
                 all_results[agent.name] = []
             all_results[agent.name].append(result)
 
-        save_checkpoint(all_results, ckpt_suffix)
+            # Save after every agent (safe for parallel writes since keys differ)
+            save_checkpoint(all_results, ckpt_suffix)
 
     return all_results
 
@@ -343,6 +360,8 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_suffix",       type=str, default="")
     parser.add_argument("--fast", action="store_true",
                         help="Quick debug: 20 ep/task, 1 seed, batch 64")
+    parser.add_argument("--agent_idx",  type=int, default=None,
+                        help="Run only this agent index (0-6). Omit to run all.")
     args = parser.parse_args()
 
     if args.fast:
@@ -357,7 +376,8 @@ if __name__ == "__main__":
     n_total = ep_per_task * len(CW10_TASKS)
     print(f"CW10 Experiment")
     print(f"  episodes_per_task={ep_per_task}  total={n_total}  "
-          f"seeds={n_seeds}  batch={batch_size}")
+          f"seeds={n_seeds}  batch={batch_size}"
+          + (f"  agent_idx={args.agent_idx}" if args.agent_idx is not None else ""))
     print(f"  Results → {RESULTS_DIR}\n")
 
     all_results = run_all(
@@ -366,6 +386,7 @@ if __name__ == "__main__":
         ckpt_suffix=args.ckpt_suffix,
         batch_size=batch_size,
         reward_threshold=args.reward_threshold,
+        agent_idx=args.agent_idx,
     )
     summary = save_results(all_results, ep_per_task)
     print_table(summary)

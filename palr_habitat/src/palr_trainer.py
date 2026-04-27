@@ -199,7 +199,14 @@ class PALRState:
                 (self.baseline_erank[k] - erank_k) / max(self.baseline_erank[k], 1.0)
             )
             combined = dead_deficit + self.rank_beta * rank_deficit
-            new_scales[k] = float(np.clip(1.0 + self.beta * combined, 1.0, self.max_lr_scale))
+            # Normalise combined to [0, 1] then linearly map to
+            # [1, max_lr_scale].  Saturates only when fully degraded
+            # (dead=1.0 AND rank_deficit=1.0 simultaneously).
+            combined_norm = combined / (1.0 + self.rank_beta)
+            new_scales[k] = float(
+                1.0 + (self.max_lr_scale - 1.0)
+                * float(np.clip(combined_norm, 0.0, 1.0))
+            )
 
             entry[f"block_{k}_dead"]     = dead_k
             entry[f"block_{k}_erank"]    = erank_k
