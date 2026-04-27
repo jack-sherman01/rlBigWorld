@@ -33,6 +33,26 @@ SRC="${SCRIPT_DIR}/src"
 CFG="${SCRIPT_DIR}/configs"
 
 # --------------------------------------------------------------------------- #
+# EGL vendor selection (force NVIDIA backend for habitat-sim).
+# Some clusters only ship 50_mesa.json under /usr/share/glvnd/egl_vendor.d/,
+# which causes habitat-sim to fail with EGL_BAD_PARAMETER on headless GPU
+# nodes. We provide a user-local 10_nvidia.json and point libglvnd at it.
+# --------------------------------------------------------------------------- #
+NVIDIA_EGL_JSON="${HOME}/.local/share/glvnd/egl_vendor.d/10_nvidia.json"
+if [[ ! -f "${NVIDIA_EGL_JSON}" ]]; then
+    mkdir -p "$(dirname "${NVIDIA_EGL_JSON}")"
+    cat > "${NVIDIA_EGL_JSON}" <<'EOF'
+{
+    "file_format_version" : "1.0.0",
+    "ICD" : {
+        "library_path" : "libEGL_nvidia.so.0"
+    }
+}
+EOF
+fi
+export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-${NVIDIA_EGL_JSON}}"
+
+# --------------------------------------------------------------------------- #
 # Defaults
 # --------------------------------------------------------------------------- #
 AGENT="palr"          # palr | baseline
