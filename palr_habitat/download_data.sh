@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_DIR="${SCRIPT_DIR}/data"
+DATA_DIR="${DATA_DIR:-${SCRIPT_DIR}/data}"
 
 mkdir -p "${DATA_DIR}"
 cd "${SCRIPT_DIR}"

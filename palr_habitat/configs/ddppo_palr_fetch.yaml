@@ -90,16 +90,16 @@ CURRICULUM:
   phases:
     - task:          "RearrangePickTask-v0"
       label:         "apple_pick"
-      dataset:       "data/datasets/rearrange/apple_pick_train.json.gz"
+      dataset:       "data/datasets/replica_cad/v2/train/rearrange.json.gz"
     - task:          "RearrangePickTask-v0"
       label:         "bowl_pick"
-      dataset:       "data/datasets/rearrange/bowl_pick_train.json.gz"
+      dataset:       "data/datasets/replica_cad/v2/train/rearrange_easy.json.gz"
     - task:          "RearrangeOpenFridgeTask-v0"
       label:         "open_fridge"
-      dataset:       "data/datasets/rearrange/fridge_train.json.gz"
+      dataset:       "data/datasets/replica_cad/v2/train/in_fridge_1k_100.json.gz"
     - task:          "RearrangePlaceTask-v0"
       label:         "sink_place"
-      dataset:       "data/datasets/rearrange/sink_place_train.json.gz"
+      dataset:       "data/datasets/replica_cad/v2/train/all_receptacles_10k_1k.json.gz"
 
 # --------------------------------------------------------------------------- #
 # Observations used by the policy

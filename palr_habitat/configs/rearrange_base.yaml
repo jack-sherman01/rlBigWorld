@@ -1,0 +1,79 @@
+# =============================================================================
+#  configs/rearrange_base.yaml
+#
+#  Base Habitat task config for Fetch Rearrangement tasks.
+#  Referenced by: ddppo_palr_fetch.yaml, ddppo_baseline_fetch.yaml
+#
+#  NOTE: palr_trainer.py builds its own habitat.Config programmatically and
+#  does NOT load this file through habitat's config system.  This file exists
+#  for compatibility with habitat-baselines launchers only.
+# =============================================================================
+
+ENVIRONMENT:
+  MAX_EPISODE_STEPS: 200
+
+DATASET:
+  TYPE: RearrangeDataset-v0
+  SPLIT: train
+  DATA_PATH: "data/datasets/replica_cad/v2/train/rearrange.json.gz"
+  SCENES_DIR: "data/"
+
+TASK:
+  TYPE: RearrangePickTask-v0
+
+  SENSORS:
+    - JOINT_SENSOR
+    - IS_HOLDING_SENSOR
+    - TARGET_START_GPS_COMPASS_SENSOR
+    - TARGET_GOAL_GPS_COMPASS_SENSOR
+
+  MEASUREMENTS:
+    - REARRANGE_PICK_REWARD
+    - REARRANGE_PICK_SUCCESS
+    - NUM_STEPS
+
+  REARRANGE_PICK_REWARD:
+    DIST_REWARD: 1.0
+    PICK_REWARD: 5.0
+    CONSTRAINT_VIOLATE_PEN: 1.0
+    DROP_PEN: 0.5
+    WRONG_PICK_PEN: 0.5
+    FORCE_PEN: 0.001
+    MAX_FORCE_PEN: 1.5
+    FORCE_END_PEN: 10.0
+    USE_DIFF: true
+
+  REARRANGE_PICK_SUCCESS:
+    SUCC_THRESH: 0.15
+
+SIMULATOR:
+  TYPE: RearrangeSim-v0
+  SCENE: "data/replica_cad/configs/scenes/v3_sc1_staging_00.scene_instance.json"
+  SCENE_DATASET: "data/replica_cad/replicaCAD.scene_dataset_config.json"
+  SEED: 0
+  ADDITIONAL_OBJECT_PATHS:
+    - "data/objects/ycb/configs/"
+
+  HABITAT_SIM_V0:
+    GPU_DEVICE_ID: 0
+    GPU_GPU: false
+    ALLOW_SLIDING: false
+    ENABLE_PHYSICS: true
+
+  AGENT_0:
+    SENSORS:
+      - HEAD_RGB_SENSOR
+      - HEAD_DEPTH_SENSOR
+    HEIGHT: 1.5
+    RADIUS: 0.1
+
+  HEAD_RGB_SENSOR:
+    WIDTH: 128
+    HEIGHT: 128
+
+  HEAD_DEPTH_SENSOR:
+    WIDTH: 128
+    HEIGHT: 128
+    MIN_DEPTH: 0.0
+    MAX_DEPTH: 10.0
+    NORMALIZE_DEPTH: true
