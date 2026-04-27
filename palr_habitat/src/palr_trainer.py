@@ -477,6 +477,10 @@ class PALRDDPPOTrainer:
                       f"obs_space={probe.observation_space} "
                       f"action_space={probe.action_space}",
                       flush=True)
+                obs = probe.reset()
+                print(f"[PALR-DEBUG] reset OK; "
+                      f"obs keys={list(obs.keys()) if hasattr(obs, 'keys') else type(obs)}",
+                      flush=True)
                 probe.close()
             env_fn_args = [
                 (task_type, dataset_path, self.seed, self.rank, i)
