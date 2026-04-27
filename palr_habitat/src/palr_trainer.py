@@ -178,6 +178,19 @@ def _make_single_env(task_type: str, dataset_path: str,
         cfg.habitat.simulator.habitat_sim_v0.gpu_device_id = rank
         cfg.habitat.simulator.seed = seed + rank * 1000 + env_idx
 
+        # Disable habitat-sim's concurrent (async) renderer.  When multiple
+        # VectorEnv workers share a single GPU's EGL driver, the
+        # `get_sensor_observations_async_finish` path occasionally hits a
+        # SIGABRT inside Magnum/EGL after a few dozen steps.  Forcing
+        # synchronous rendering eliminates the race at the cost of ~20%
+        # throughput.  Override with PALR_CONCUR_RENDER=1 to re-enable.
+        if os.environ.get("PALR_CONCUR_RENDER", "0") != "1":
+            if hasattr(cfg.habitat.simulator, "concur_render"):
+                cfg.habitat.simulator.concur_render = False
+            if hasattr(cfg.habitat.simulator.habitat_sim_v0,
+                       "enable_gfx_replay_save"):
+                cfg.habitat.simulator.habitat_sim_v0.enable_gfx_replay_save = False
+
         # Reduce sensor resolution to speed up sim step (default 256x256 is
         # very slow on shared headless EGL).  Override env var for tuning:
         #   PALR_SENSOR_RES=64  -> tiny but fast smoke test

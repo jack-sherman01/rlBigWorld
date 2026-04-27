@@ -150,6 +150,11 @@ class PALRFetchNet(nn.Module):
         # --- visual ---
         depth = obs["head_depth"].float()      # [B, H, W, 1]
         depth = depth.permute(0, 3, 1, 2)      # [B, 1, H, W]
+        # habitat depth sensor can emit +inf / NaN for sky / out-of-range
+        # pixels.  Clamp to a finite range so downstream conv/BN don't blow
+        # up to NaN on the very first forward pass.
+        depth = torch.nan_to_num(depth, nan=0.0, posinf=10.0, neginf=0.0)
+        depth = depth.clamp(0.0, 10.0)
         vis_feat = self.visual_encoder(depth)  # [B, 512]
 
         # --- proprio ---
@@ -158,6 +163,7 @@ class PALRFetchNet(nn.Module):
         obj_pos  = obs["obj_start_sensor"].float()
         rest_pos = obs["relative_resting_position"].float()
         proprio  = torch.cat([joint, holding, obj_pos, rest_pos], dim=-1)
+        proprio  = torch.nan_to_num(proprio, nan=0.0, posinf=10.0, neginf=-10.0)
         prop_feat = self.proprio_encoder(proprio)  # [B, 128]
 
         # --- fuse → GRU ---
