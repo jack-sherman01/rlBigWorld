@@ -177,6 +177,22 @@ def _make_single_env(task_type: str, dataset_path: str,
         cfg.habitat.dataset.split = "train"
         cfg.habitat.simulator.habitat_sim_v0.gpu_device_id = rank
         cfg.habitat.simulator.seed = seed + rank * 1000 + env_idx
+
+        # Reduce sensor resolution to speed up sim step (default 256x256 is
+        # very slow on shared headless EGL).  Override env var for tuning:
+        #   PALR_SENSOR_RES=64  -> tiny but fast smoke test
+        #   PALR_SENSOR_RES=128 -> default here, ~4x faster than 256
+        #   PALR_SENSOR_RES=256 -> habitat default
+        sensor_res = int(os.environ.get("PALR_SENSOR_RES", "128"))
+        agents_cfg = cfg.habitat.simulator.agents
+        for agent_name in agents_cfg:
+            sim_sensors = agents_cfg[agent_name].sim_sensors
+            for sensor_name in sim_sensors:
+                sensor = sim_sensors[sensor_name]
+                if hasattr(sensor, "height"):
+                    sensor.height = sensor_res
+                if hasattr(sensor, "width"):
+                    sensor.width = sensor_res
     # habitat.VectorEnv expects a GymHabitatEnv (it queries
     # `original_action_space` etc.), so we go through habitat.gym instead of
     # constructing habitat.Env directly.
