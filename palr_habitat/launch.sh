@@ -53,6 +53,20 @@ fi
 export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-${NVIDIA_EGL_JSON}}"
 
 # --------------------------------------------------------------------------- #
+# Library path hygiene.
+# habitat-sim must use the system NVIDIA libGL/libEGL, but conda envs often
+# ship their own libGL/libEGL/libstdc++ in $CONDA_PREFIX/lib which, when on
+# LD_LIBRARY_PATH, causes "GL::Context: cannot retrieve OpenGL version".
+# Drop the conda env's lib dir from LD_LIBRARY_PATH for this process tree.
+# --------------------------------------------------------------------------- #
+if [[ -n "${CONDA_PREFIX:-}" && -n "${LD_LIBRARY_PATH:-}" ]]; then
+    LD_LIBRARY_PATH="$(echo ":${LD_LIBRARY_PATH}:" \
+        | sed -e "s|:${CONDA_PREFIX}/lib:|:|g" \
+              -e 's|^:||' -e 's|:$||')"
+    export LD_LIBRARY_PATH
+fi
+
+# --------------------------------------------------------------------------- #
 # Defaults
 # --------------------------------------------------------------------------- #
 AGENT="palr"          # palr | baseline
