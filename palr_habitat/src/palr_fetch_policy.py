@@ -3,16 +3,18 @@ palr_fetch_policy.py
 ====================
 Actor-Critic policy for Habitat Fetch Rearrangement.
 
-Architecture
-------------
+Architecture (matches the obs dict produced by habitat-lab 0.2.5
+`benchmark/rearrange/pick.yaml`):
+
   Visual stream:
-    RGB [B,3,128,128] + Depth [B,1,128,128]
-      → PALRResNetEncoder (ResNet-18, in_channels=4)
+    head_depth [B,1,256,256]
+      → PALRResNetEncoder (ResNet-18, in_channels=1)
       → [B, 512]
 
   Proprioceptive stream:
-    joint positions [B, J] + is_holding [B,1] + gps_compass [B, 4]
-      → Linear(J+5, 128) → ReLU
+    joint (7) + is_holding (1) + obj_start_sensor (3)
+                              + relative_resting_position (3)        = 14
+      → Linear(., 128) → ReLU
       → [B, 128]
 
   Fusion:
@@ -20,7 +22,7 @@ Architecture
       → GRU(640, hidden_size=512)
       → [B, 512]
 
-  Actor head (continuous Gaussian, arm = 7-DOF):
+  Actor head (continuous Gaussian over the task action vector):
     Linear(512, action_dim*2) → [B, action_dim], [B, action_dim]
 
   Critic head:
@@ -68,6 +70,12 @@ class DiagGaussian(nn.Module):
 
 # ── Main policy network ───────────────────────────────────────────────────────
 
+# Sizes of the proprio sub-vectors expected from the rearrange pick task.
+_OBJ_START_DIM           = 3
+_RELATIVE_RESTING_DIM    = 3
+_HOLDING_DIM             = 1
+
+
 class PALRFetchNet(nn.Module):
     """
     The neural network for PALR Fetch policy.
@@ -86,12 +94,18 @@ class PALRFetchNet(nn.Module):
         self.use_palr  = use_palr
         self.hidden_size = hidden_size
 
-        # Visual backbone — RGB-D input (4 channels)
-        self.visual_encoder = PALRResNetEncoder(in_channels=4)
+        # Visual backbone — depth-only (1 channel) since habitat rearrange
+        # pick task does not expose head_rgb by default.
+        self.visual_encoder = PALRResNetEncoder(in_channels=1)
 
         # Proprioceptive encoder
-        # inputs: joint (7) + is_holding (1) + start_gps_compass (2) + goal_gps_compass (2) = 12
-        proprio_dim = joint_dim + 1 + 2 + 2
+        # inputs: joint + is_holding + obj_start_sensor + relative_resting_position
+        proprio_dim = (
+            joint_dim
+            + _HOLDING_DIM
+            + _OBJ_START_DIM
+            + _RELATIVE_RESTING_DIM
+        )
         self.proprio_encoder = nn.Sequential(
             nn.Linear(proprio_dim, 128),
             nn.ReLU(inplace=True),
@@ -123,9 +137,8 @@ class PALRFetchNet(nn.Module):
     ) -> Tuple[Normal, torch.Tensor, torch.Tensor]:
         """
         Args:
-            obs:        dict with keys "rgb", "depth", "joint",
-                        "is_holding", "target_start_gps_compass",
-                        "target_goal_gps_compass"
+            obs:        dict with keys "head_depth", "joint", "is_holding",
+                        "obj_start_sensor", "relative_resting_position"
             rnn_hidden: [1, B, hidden_size]
             masks:      [T*B, 1] or [B, 1]  — 0 at episode boundaries
 
@@ -135,20 +148,16 @@ class PALRFetchNet(nn.Module):
             rnn_hidden: [1, B, hidden_size]  (updated)
         """
         # --- visual ---
-        rgb   = obs["rgb"].float()    / 255.0  # [B, H, W, 3]
-        depth = obs["depth"].float()           # [B, H, W, 1]
-        # HWC → CHW
-        rgb   = rgb.permute(0, 3, 1, 2)        # [B, 3, H, W]
+        depth = obs["head_depth"].float()      # [B, H, W, 1]
         depth = depth.permute(0, 3, 1, 2)      # [B, 1, H, W]
-        x_vis = torch.cat([rgb, depth], dim=1) # [B, 4, H, W]
-        vis_feat = self.visual_encoder(x_vis)  # [B, 512]
+        vis_feat = self.visual_encoder(depth)  # [B, 512]
 
         # --- proprio ---
-        joint   = obs["joint"].float()
-        holding = obs["is_holding"].float()
-        gps_s   = obs["target_start_gps_compass"].float()
-        gps_g   = obs["target_goal_gps_compass"].float()
-        proprio = torch.cat([joint, holding, gps_s, gps_g], dim=-1)
+        joint    = obs["joint"].float()
+        holding  = obs["is_holding"].float()
+        obj_pos  = obs["obj_start_sensor"].float()
+        rest_pos = obs["relative_resting_position"].float()
+        proprio  = torch.cat([joint, holding, obj_pos, rest_pos], dim=-1)
         prop_feat = self.proprio_encoder(proprio)  # [B, 128]
 
         # --- fuse → GRU ---

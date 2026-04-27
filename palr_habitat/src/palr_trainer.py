@@ -399,17 +399,16 @@ class PALRDDPPOTrainer:
         encoder: PALRResNetEncoder = policy.module.visual_encoder
         B = min(palr_state.diag_batch_size, self.num_steps * self.num_envs)
 
-        # Sample observations from rollout buffer
-        all_rgb   = rollouts.obs["rgb"][:-1].reshape(-1, *rollouts.obs["rgb"].shape[2:])
-        all_depth = rollouts.obs["depth"][:-1].reshape(-1, *rollouts.obs["depth"].shape[2:])
-        idx = torch.randperm(all_rgb.shape[0])[:B]
-        rgb_b   = all_rgb[idx].float() / 255.0     # [B, H, W, 3]
+        # Sample observations from rollout buffer.
+        # Pick task only exposes head_depth (no RGB), so we run the encoder
+        # on depth only.  The encoder was constructed with in_channels=1.
+        all_depth = rollouts.obs["head_depth"][:-1].reshape(
+            -1, *rollouts.obs["head_depth"].shape[2:])
+        idx = torch.randperm(all_depth.shape[0])[:B]
         depth_b = all_depth[idx].float()            # [B, H, W, 1]
-        # HWC → CHW
-        rgb_b   = rgb_b.permute(0, 3, 1, 2).to(self.device)
-        depth_b = depth_b.permute(0, 3, 1, 2).to(self.device)
+        depth_b = depth_b.permute(0, 3, 1, 2).to(self.device)  # [B, 1, H, W]
 
-        metrics = compute_block_metrics(encoder, rgb_b, depth_b)
+        metrics = compute_block_metrics(encoder, depth_b)
 
         # Update lr_scales
         palr_state.update(metrics, encoder, {}, update_idx)
