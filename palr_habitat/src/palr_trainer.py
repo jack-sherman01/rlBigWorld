@@ -134,6 +134,13 @@ class RolloutStorage:
 
 # ── VectorEnv wrapper ─────────────────────────────────────────────────────────
 
+# Path to the habitat task config that is loaded inside each worker.
+# Resolved relative to this file so workers don't depend on CWD.
+_BASE_TASK_CONFIG = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "configs", "rearrange_base.yaml")
+)
+
+
 def _make_single_env(task_type: str, dataset_path: str,
                      seed: int, rank: int, env_idx: int):
     """Construct a single habitat.Env for habitat.VectorEnv.
@@ -142,7 +149,7 @@ def _make_single_env(task_type: str, dataset_path: str,
     by habitat.VectorEnv's worker processes.
     """
     import habitat
-    cfg = habitat.get_config()
+    cfg = habitat.get_config(_BASE_TASK_CONFIG)
     cfg.defrost()
     cfg.ENVIRONMENT.MAX_EPISODE_STEPS = 200
     cfg.TASK.TYPE = task_type
