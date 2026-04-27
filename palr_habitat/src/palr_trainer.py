@@ -30,9 +30,12 @@ It uses habitat's gym interface directly for maximum transparency.
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import os
+import sys
 import time
+import traceback
 from collections import defaultdict
 from typing import Dict, List, Optional
 
@@ -41,6 +44,10 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import yaml
+
+# Dump Python traceback on fatal signals (SEGV/SIGABRT/etc.) — invaluable
+# when a habitat-sim worker dies inside C++ without raising in Python.
+faulthandler.enable(all_threads=True)
 
 # habitat gym interface
 import habitat.gym   # noqa: F401  (registers habitat gym envs)
@@ -174,7 +181,53 @@ def _make_single_env(task_type: str, dataset_path: str,
     # `original_action_space` etc.), so we go through habitat.gym instead of
     # constructing habitat.Env directly.
     from habitat.gym import make_gym_from_config
-    return make_gym_from_config(cfg)
+    env = make_gym_from_config(cfg)
+    # Wrap so any exception inside reset/step gets printed to stderr (which
+    # forkserver workers DO forward to the parent terminal) before being
+    # re-raised.  Without this, VectorEnv's pipe swallows the real error and
+    # we only see ConnectionResetError / EOFError in the parent.
+    return _DebugEnvWrapper(env, label=f"rank{rank}-env{env_idx}")
+
+
+class _DebugEnvWrapper(gym.Wrapper):
+    """gym.Wrapper that prints full traceback on any error in reset/step.
+
+    Activated whenever PALR_DEBUG_SINGLE_ENV=1 (also passes through
+    `original_action_space` / `action_space` / `observation_space` so
+    habitat.VectorEnv's introspection still works).
+    """
+
+    def __init__(self, env, label: str):
+        super().__init__(env)
+        self._label = label
+        # habitat.VectorEnv looks at .original_action_space — pass through
+        if hasattr(env, "original_action_space"):
+            self.original_action_space = env.original_action_space
+
+    def reset(self, *args, **kwargs):
+        try:
+            return self.env.reset(*args, **kwargs)
+        except BaseException:
+            sys.stderr.write(
+                f"\n[PALR-WORKER-ERROR][{self._label}] reset() raised:\n"
+            )
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
+            raise
+
+    def step(self, action):
+        try:
+            return self.env.step(action)
+        except BaseException:
+            sys.stderr.write(
+                f"\n[PALR-WORKER-ERROR][{self._label}] step() raised; "
+                f"action type={type(action).__name__} "
+                f"shape={getattr(action, 'shape', None)} "
+                f"dtype={getattr(action, 'dtype', None)}\n"
+            )
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
+            raise
 
 
 def make_env_fn(task_type: str, dataset_path: str, seed: int, rank: int, env_idx: int):
@@ -470,17 +523,72 @@ class PALRDDPPOTrainer:
             #          aren't swallowed by VectorEnv's pipe and we can see
             #          the real traceback.  Remove once stable.
             if os.environ.get("PALR_DEBUG_SINGLE_ENV", "0") == "1":
+                n_steps   = int(os.environ.get("PALR_DEBUG_STEPS", "20"))
+                n_resets  = int(os.environ.get("PALR_DEBUG_RESETS", "2"))
+                print(f"[PALR-DEBUG] === single-env probe: "
+                      f"resets={n_resets} steps_per_reset={n_steps} ===",
+                      flush=True)
                 probe = _make_single_env(task_type, dataset_path,
                                          self.seed, self.rank, 0)
-                print("[PALR-DEBUG] single env OK; "
-                      f"obs_space={probe.observation_space} "
+                print("[PALR-DEBUG] env created OK; "
+                      f"obs_space keys="
+                      f"{list(probe.observation_space.spaces.keys()) if hasattr(probe.observation_space, 'spaces') else probe.observation_space} "
                       f"action_space={probe.action_space}",
                       flush=True)
-                obs = probe.reset()
-                print(f"[PALR-DEBUG] reset OK; "
-                      f"obs keys={list(obs.keys()) if hasattr(obs, 'keys') else type(obs)}",
+                act_space = probe.action_space
+                low  = getattr(act_space, "low",  None)
+                high = getattr(act_space, "high", None)
+                print(f"[PALR-DEBUG] action bounds: low={low} high={high}",
                       flush=True)
+
+                for ep in range(n_resets):
+                    print(f"[PALR-DEBUG] --- reset #{ep} ---", flush=True)
+                    obs = probe.reset()
+                    if hasattr(obs, "keys"):
+                        shapes = {k: (getattr(v, "shape", None),
+                                      getattr(v, "dtype", None))
+                                  for k, v in obs.items()}
+                        print(f"[PALR-DEBUG] reset OK; obs shapes/dtypes={shapes}",
+                              flush=True)
+                    else:
+                        print(f"[PALR-DEBUG] reset OK; obs type={type(obs)}",
+                              flush=True)
+
+                    for t in range(n_steps):
+                        act = act_space.sample()
+                        # cast to float32 (habitat usually expects this)
+                        if hasattr(act, "astype"):
+                            act = act.astype(np.float32)
+                        try:
+                            step_out = probe.step(act)
+                        except BaseException as e:
+                            print(f"[PALR-DEBUG] step #{t} RAISED in main process: "
+                                  f"{type(e).__name__}: {e}",
+                                  flush=True)
+                            raise
+                        # gym old API: (obs, reward, done, info); new: 5-tuple
+                        if len(step_out) == 5:
+                            obs, reward, terminated, truncated, info = step_out
+                            done = bool(terminated) or bool(truncated)
+                        else:
+                            obs, reward, done, info = step_out
+                        if t < 3 or t == n_steps - 1 or done:
+                            print(f"[PALR-DEBUG] step #{t} OK; "
+                                  f"reward={float(reward):.4f} done={done} "
+                                  f"info_keys={list(info.keys()) if isinstance(info, dict) else type(info)}",
+                                  flush=True)
+                        if done:
+                            print(f"[PALR-DEBUG] episode ended at step #{t}",
+                                  flush=True)
+                            break
+
                 probe.close()
+                print("[PALR-DEBUG] === single-env probe PASSED ===", flush=True)
+
+                if os.environ.get("PALR_DEBUG_PROBE_ONLY", "0") == "1":
+                    print("[PALR-DEBUG] PALR_DEBUG_PROBE_ONLY=1 -> exiting before VectorEnv",
+                          flush=True)
+                    sys.exit(0)
             env_fn_args = [
                 (task_type, dataset_path, self.seed, self.rank, i)
                 for i in range(self.num_envs)
