@@ -54,17 +54,24 @@ export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-${NVIDI
 
 # --------------------------------------------------------------------------- #
 # Library path hygiene.
-# habitat-sim must use the system NVIDIA libGL/libEGL, but conda envs often
-# ship their own libGL/libEGL/libstdc++ in $CONDA_PREFIX/lib which, when on
-# LD_LIBRARY_PATH, causes "GL::Context: cannot retrieve OpenGL version".
-# Drop the conda env's lib dir from LD_LIBRARY_PATH for this process tree.
+# - conda env's libstdc++/libLLVM are needed (system libstdc++ is too old:
+#   missing GLIBCXX_3.4.30), so we KEEP $CONDA_PREFIX/lib on LD_LIBRARY_PATH.
+# - But conda also ships its own libGL/libEGL which conflict with the system
+#   NVIDIA GL stack and cause "GL::Context: cannot retrieve OpenGL version".
+#   We force-load the system NVIDIA GL libs via LD_PRELOAD so they win the
+#   symbol resolution race against the conda copies.
 # --------------------------------------------------------------------------- #
-if [[ -n "${CONDA_PREFIX:-}" && -n "${LD_LIBRARY_PATH:-}" ]]; then
-    LD_LIBRARY_PATH="$(echo ":${LD_LIBRARY_PATH}:" \
-        | sed -e "s|:${CONDA_PREFIX}/lib:|:|g" \
-              -e 's|^:||' -e 's|:$||')"
-    export LD_LIBRARY_PATH
+_sys_preload=""
+for _lib in /lib/x86_64-linux-gnu/libGLdispatch.so.0 \
+            /lib/x86_64-linux-gnu/libEGL.so.1 \
+            /lib/x86_64-linux-gnu/libGLX.so.0 \
+            /lib/x86_64-linux-gnu/libOpenGL.so.0; do
+    [[ -f "${_lib}" ]] && _sys_preload="${_sys_preload}${_sys_preload:+:}${_lib}"
+done
+if [[ -n "${_sys_preload}" ]]; then
+    export LD_PRELOAD="${_sys_preload}${LD_PRELOAD:+:${LD_PRELOAD}}"
 fi
+unset _sys_preload _lib
 
 # --------------------------------------------------------------------------- #
 # Defaults
