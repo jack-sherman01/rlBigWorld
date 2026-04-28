@@ -40,7 +40,10 @@ DEF="${DEF:-${PROJ_DIR}/habitat_v3.def}"       # Singularity definition file
 SEED="${SEED:-0}"
 NUM_GPUS="${NUM_GPUS:-1}"
 NUM_ENVS="${NUM_ENVS:-16}"
-CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_fetch.yaml}" # NOTE: config file relative to experiment name! change it to ddppo_palr_fetch.yaml for baseline.
+CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_fetch.yaml}" 
+# NOTE: config file relative to experiment name! change it to ddppo_baseline_fetch.yaml for baseline:
+# CONFIG="${CONFIG:-palr_habitat/configs/ddppo_baseline_fetch.yaml}"
+
 OUTDIR="${OUTDIR:-results/palr_seed${SEED}}"
 
 # GPU visibility (SLURM sets CUDA_VISIBLE_DEVICES automatically when --gres is
