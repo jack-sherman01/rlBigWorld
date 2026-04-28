@@ -424,6 +424,7 @@ class PALRDDPPOTrainer:
 
         os.makedirs(self.outdir, exist_ok=True)
         os.makedirs(f"{self.outdir}/checkpoints", exist_ok=True)
+        os.makedirs(f"{self.outdir}/videos", exist_ok=True)
 
     # ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -563,6 +564,55 @@ class PALRDDPPOTrainer:
 
         return metrics
 
+    # ── Video recording ────────────────────────────────────────────────────────
+
+    @torch.no_grad()
+    def _record_episode(self, policy: nn.Module, phase, tag: str) -> None:
+        """Run one greedy episode in a fresh env and save a depth video."""
+        import imageio
+
+        video_path = f"{self.outdir}/videos/{tag}.mp4"
+        env = _make_single_env(phase.task_type, phase.dataset_path,
+                               self.seed, self.rank, env_idx=999)
+        obs  = env.reset()
+        if isinstance(obs, tuple):   # new-style gym reset → (obs, info)
+            obs = obs[0]
+
+        hidden = torch.zeros(1, 1, policy.module.hidden_size, device=self.device)
+        mask   = torch.ones(1, 1, device=self.device)
+        frames = []
+
+        policy.eval()
+        for _ in range(200):
+            obs_t = {k: torch.from_numpy(v).unsqueeze(0).to(self.device)
+                     for k, v in obs.items()}
+            dist_out, _, hidden = policy.module.forward(obs_t, hidden, mask)
+            action = dist_out.mean.cpu().numpy().astype(np.float32)
+            action = np.clip(action[0], env.action_space.low, env.action_space.high)
+
+            step_out = env.step(action)
+            if len(step_out) == 5:
+                obs, _, terminated, truncated, _ = step_out
+                done = terminated or truncated
+            else:
+                obs, _, done, _ = step_out
+
+            # depth → normalised uint8 RGB frame
+            depth = obs["head_depth"][:, :, 0]            # [H, W]
+            frame = (np.clip(depth / 10.0, 0, 1) * 255).astype(np.uint8)
+            frames.append(np.stack([frame, frame, frame], axis=-1))  # [H,W,3]
+
+            mask = torch.tensor([[0.0 if done else 1.0]], device=self.device)
+            if done:
+                break
+
+        env.close()
+        if frames:
+            with imageio.get_writer(video_path, fps=15, macro_block_size=1) as w:
+                for f in frames:
+                    w.append_data(f)
+        print(f"[PALR-VIDEO] {len(frames)} frames → {video_path}", flush=True)
+
     # ── Main training loop ─────────────────────────────────────────────────────
 
     def train(self):
@@ -578,20 +628,24 @@ class PALRDDPPOTrainer:
             from torch.utils.tensorboard import SummaryWriter
             writer = SummaryWriter(f"{self.outdir}/tb")
 
-            import wandb
-            wandb.init(
-                project=os.environ.get("WANDB_PROJECT", "palr-habitat"),
-                name=os.path.basename(self.outdir),
-                config={
-                    **self.cfg,
-                    "seed":      self.seed,
-                    "num_envs":  self.num_envs,
-                    "total_steps": self.total_steps,
-                    "outdir":    self.outdir,
-                },
-                dir=self.outdir,
-                resume="allow",
-            )
+            try:
+                import wandb
+                wandb.init(
+                    project=os.environ.get("WANDB_PROJECT", "palr-habitat"),
+                    name=os.path.basename(self.outdir),
+                    config={
+                        **self.cfg,
+                        "seed":      self.seed,
+                        "num_envs":  self.num_envs,
+                        "total_steps": self.total_steps,
+                        "outdir":    self.outdir,
+                    },
+                    dir=self.outdir,
+                    resume="allow",
+                )
+            except Exception as _e:
+                print(f"[PALR] wandb init failed, continuing without it: {_e}",
+                      flush=True)
 
         # ── Build environments (rank-local) ───────────────────────────────────
         phase = curriculum.current_phase
@@ -742,8 +796,9 @@ class PALRDDPPOTrainer:
         # ── Stats ──────────────────────────────────────────────────────────────
         episode_rewards: List[float] = []
         episode_successes: List[float] = []
-        update_idx  = 0
+        update_idx      = 0
         total_env_steps = 0
+        total_episodes  = 0
         t_start = time.time()
 
         # Per-env accumulators for episode returns (reset at done boundaries)
@@ -858,6 +913,13 @@ class PALRDDPPOTrainer:
                             episode_rewards.append(float(running_ep_returns[i]))
                             episode_successes.append(self._extract_success(info))
                             running_ep_returns[i] = 0.0
+                            total_episodes += 1
+                            if self.is_main and total_episodes % 50 == 0:
+                                tag = (f"train"
+                                       f"_{curriculum.current_phase.label}"
+                                       f"_ep{total_episodes:06d}")
+                                self._record_episode(
+                                    policy, curriculum.current_phase, tag)
 
                     total_env_steps += self.num_envs
                     curriculum.step(self.num_envs)
@@ -998,9 +1060,12 @@ class PALRDDPPOTrainer:
                         **{f"palr/block{k}_lr_scale": float(palr_state.lr_scales[k])
                            for k in range(4) if f"block_{k}_dead" in plast_metrics},
                     }
-                    import wandb
-                    if wandb.run is not None:
-                        wandb.log(log_dict, step=total_env_steps)
+                    try:
+                        import wandb
+                        if wandb.run is not None:
+                            wandb.log(log_dict, step=total_env_steps)
+                    except Exception:
+                        pass
 
             # ── Checkpoint ──────────────────────────────────────────────────────
             ckpt_interval = self.cfg.get("CHECKPOINT_INTERVAL", 500)
@@ -1018,14 +1083,27 @@ class PALRDDPPOTrainer:
                 torch.save(ckpt, path)
                 print(f"  [checkpoint saved → {path}]")
 
+        # ── Evaluation videos ──────────────────────────────────────────────────
+        if self.is_main:
+            n_eval = int(os.environ.get("PALR_EVAL_EPISODES", "5"))
+            print(f"[PALR] recording {n_eval} eval episodes …", flush=True)
+            for ep in range(n_eval):
+                tag = (f"eval"
+                       f"_{curriculum.current_phase.label}"
+                       f"_ep{ep:02d}")
+                self._record_episode(policy, curriculum.current_phase, tag)
+
         # ── Cleanup ────────────────────────────────────────────────────────────
         envs.close()
         if writer:
             writer.close()
         if self.is_main:
-            import wandb
-            if wandb.run is not None:
-                wandb.finish()
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.finish()
+            except Exception:
+                pass
 
         # Save final plasticity history
         if self.is_main:
