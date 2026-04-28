@@ -205,6 +205,10 @@ def _make_single_env(task_type: str, dataset_path: str,
         cfg.habitat.environment.max_episode_steps = 200
         cfg.habitat.dataset.data_path = dataset_path
         cfg.habitat.dataset.split = "train"
+        cfg.habitat.dataset.scenes_dir = "palr_habitat/data/"
+        cfg.habitat.simulator.scene_dataset = (
+            "palr_habitat/data/replica_cad/replicaCAD.scene_dataset_config.json"
+        )
         cfg.habitat.simulator.habitat_sim_v0.gpu_device_id = rank
         cfg.habitat.simulator.seed = seed + rank * 1000 + env_idx
 
