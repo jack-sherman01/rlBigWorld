@@ -168,12 +168,26 @@ class PALRFetchNet(nn.Module):
 
         # --- fuse → GRU ---
         fused = torch.cat([vis_feat, prop_feat], dim=-1)  # [B, 640]
-        # GRU expects [T, B, input_size]; with T=1 step (online)
-        fused = fused.unsqueeze(0)               # [1, B, 640]
-        # Zero hidden state at episode boundaries
-        rnn_hidden = rnn_hidden * masks.unsqueeze(0)
-        out, rnn_hidden = self.gru(fused, rnn_hidden)   # out: [1, B, 512]
-        out = out.squeeze(0)                    # [B, 512]
+        N = rnn_hidden.shape[1]   # num envs in this mini-batch
+        T = fused.shape[0] // N  # 1 during rollout, num_steps during PPO update
+
+        if T == 1:
+            # Rollout: single step, masks shape [N, 1]
+            fused = fused.unsqueeze(0)                        # [1, N, 640]
+            rnn_hidden = rnn_hidden * masks.view(1, N, 1)
+            out, rnn_hidden = self.gru(fused, rnn_hidden)     # [1, N, 512]
+            out = out.squeeze(0)                              # [N, 512]
+        else:
+            # PPO update: run GRU step-by-step so masks reset hidden state
+            # at episode boundaries within the mini-batch.
+            fused_t  = fused.view(T, N, -1)   # [T, N, 640]
+            masks_t  = masks.view(T, N, 1)    # [T, N, 1]
+            outputs  = []
+            for t in range(T):
+                rnn_hidden = rnn_hidden * masks_t[t].unsqueeze(0)  # [1, N, H]
+                out_t, rnn_hidden = self.gru(fused_t[t:t+1], rnn_hidden)
+                outputs.append(out_t)
+            out = torch.cat(outputs, dim=0).view(T * N, -1)  # [T*N, 512]
 
         dist  = self.actor(out)
         value = self.critic(out)                # [B, 1]

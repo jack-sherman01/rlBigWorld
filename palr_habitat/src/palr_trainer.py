@@ -1002,7 +1002,7 @@ class PALRDDPPOTrainer:
             print(f"  Plasticity history → {hist_path}")
             print(f"  Switch log         → {sw_path}")
 
-        dist.destroy_process_group()
+        torch.distributed.destroy_process_group()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@
 #  0.3.x has a regression.
 #
 #    - habitat-sim 0.3.2  (EGL headless, Bullet)
-#    - habitat-lab 0.3.2 + habitat-baselines 0.3.2
+#    - habitat-lab 0.3.220241205 + habitat-baselines 0.3.220241205
 #    - PyTorch 2.3.1 + CUDA 12.1   (matches driver 580 / CUDA 13 host runtime;
 #                                    cu121 wheels are compatible with 12.x+
 #                                    driver via NVIDIA forward compat)
@@ -20,7 +20,7 @@
 set -euo pipefail
 
 ENV="palr_habitat_v3"
-PY="3.10"
+PY="3.9"
 
 echo "============================================================"
 echo "  PALR-Habitat v3 environment setup"
@@ -68,8 +68,8 @@ conda run -n "${ENV}" pip install \
 echo ""
 echo "=== Step 4/5  Installing habitat-lab 0.3.2 + habitat-baselines 0.3.2 ==="
 conda run -n "${ENV}" pip install \
-    habitat-lab==0.3.2 \
-    habitat-baselines==0.3.2
+    habitat-lab==0.3.220241205 \
+    habitat-baselines==0.3.220241205
 
 # --------------------------------------------------------------------------- #
 # 5. Misc Python deps
