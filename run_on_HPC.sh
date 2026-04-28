@@ -142,7 +142,7 @@ cd $SLURM_SUBMIT_DIR
 container_path=/work/hezhang/hrii/singularity_Mujoco_Reflexive/containerReflexRL.sif
 
 singularity exec --nv $container_path bash -c "
-  source /opt/conda/etc/profile.d/conda.sh && \
+  source ~/miniforge3/etc/profile.d/conda.sh && \
   conda activate palr_habitat_v3 && \
   cd $PROJ_DIR && \
   export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} && \
