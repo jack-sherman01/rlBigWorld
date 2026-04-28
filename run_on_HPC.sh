@@ -19,12 +19,11 @@
 #SBATCH --output=logs/palr_%j.out
 #SBATCH --error=logs/palr_%j.err
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=10
+#SBATCH --ntasks=3
+#SBATCH --cpus-per-task=16
 #SBATCH --gpus=1
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
-# Uncomment and adjust the partition / account for your cluster:
 #SBATCH --partition=gpua
 #SBATCH --account=heng.zhang@iit.it
 
@@ -59,15 +58,17 @@ WANDB_PROJECT="${WANDB_PROJECT:-palr-habitat}"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[run_on_HPC] $(date '+%Y-%m-%d %H:%M:%S')  $*"; }
 
-# ── Singularity / Apptainer availability ──────────────────────────────────────
-# Many HPC clusters provide Singularity or Apptainer as an environment module.
-# Adjust the module name to match your cluster, or remove if already in PATH.
-if ! command -v singularity &>/dev/null && ! command -v apptainer &>/dev/null; then
-    log "singularity/apptainer not in PATH — attempting to load module …"
-    module load singularity 2>/dev/null \
-        || module load apptainer 2>/dev/null \
-        || { log "ERROR: cannot find singularity or apptainer"; exit 1; }
-fi
+module load intel/singularity/singularity-4.2.2
+
+# # ── Singularity / Apptainer availability ──────────────────────────────────────
+# # Many HPC clusters provide Singularity or Apptainer as an environment module.
+# # Adjust the module name to match your cluster, or remove if already in PATH.
+# if ! command -v singularity &>/dev/null && ! command -v apptainer &>/dev/null; then
+#     log "singularity/apptainer not in PATH — attempting to load module …"
+#     module load singularity 2>/dev/null \
+#         || module load apptainer 2>/dev/null \
+#         || { log "ERROR: cannot find singularity or apptainer"; exit 1; }
+# fi
 
 # Prefer 'apptainer' if available (it is the upstream rename of Singularity).
 if command -v apptainer &>/dev/null; then
@@ -106,23 +107,23 @@ if [[ "${1:-}" == "--sweep" ]]; then
     exit 0
 fi
 
-# ── Step 1: build SIF if absent ──────────────────────────────────────────────
-if [[ ! -f "${SIF}" ]]; then
-    log "SIF not found at: ${SIF}"
-    log "Building from: ${DEF}"
+# # ── Step 1: build SIF if absent ──────────────────────────────────────────────
+# if [[ ! -f "${SIF}" ]]; then
+#     log "SIF not found at: ${SIF}"
+#     log "Building from: ${DEF}"
 
-    if [[ ! -f "${DEF}" ]]; then
-        log "ERROR: definition file not found: ${DEF}"
-        exit 1
-    fi
+#     if [[ ! -f "${DEF}" ]]; then
+#         log "ERROR: definition file not found: ${DEF}"
+#         exit 1
+#     fi
 
-    # --fakeroot lets unprivileged users build on most clusters.
-    # Remove it if your site grants real root or uses --sandbox instead.
-    ${SG} build --fakeroot "${SIF}" "${DEF}"
-    log "Build complete: ${SIF}"
-else
-    log "SIF already exists — skipping build: ${SIF}"
-fi
+#     # --fakeroot lets unprivileged users build on most clusters.
+#     # Remove it if your site grants real root or uses --sandbox instead.
+#     ${SG} build --fakeroot "${SIF}" "${DEF}"
+#     log "Build complete: ${SIF}"
+# else
+#     log "SIF already exists — skipping build: ${SIF}"
+# fi
 
 # ── Step 2: prepare output directory ─────────────────────────────────────────
 mkdir -p "${PROJ_DIR}/${OUTDIR}/checkpoints"
@@ -134,30 +135,63 @@ log "Output directory: ${PROJ_DIR}/${OUTDIR}"
 # ── Step 3: run training ──────────────────────────────────────────────────────
 log "Launching training (seed=${SEED}, gpus=${NUM_GPUS}, envs=${NUM_ENVS}) …"
 
-${SG} exec \
-    --nv \
-    --bind "${PROJ_DIR}":/workspace \
-    "${SIF}" \
-    bash -c "
-        cd /workspace
-        export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
-        export HABITAT_SIM_LOG=quiet
-        export MAGNUM_LOG=quiet
-        export PYOPENGL_PLATFORM=egl
-        export TF_FORCE_GPU_ALLOW_GROWTH=true
-        export OMP_NUM_THREADS=4
-        export WANDB_PROJECT=${WANDB_PROJECT}
+cd $SLURM_SUBMIT_DIR
 
-        torchrun \
-            --nproc_per_node=${NUM_GPUS} \
-            --rdzv_backend=c10d \
-            --rdzv_endpoint=localhost:0 \
-            palr_habitat/src/palr_trainer.py \
-                --config  ${CONFIG} \
-                --seed    ${SEED} \
-                --num_envs ${NUM_ENVS} \
-                --outdir  ${OUTDIR} \
-                --resume  auto
-    "
+container_path=/work/hezhang/hrii/singularity_Mujoco_Reflexive/containerReflexRL.sif
+
+singularity exec --nv $container_path bash -c "
+  source /opt/conda/etc/profile.d/conda.sh && \
+  conda activate palr_habitat_v3 && \
+  cd $PROJ_DIR && \
+  export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} && \
+  export HABITAT_SIM_LOG=quiet && \
+  export MAGNUM_LOG=quiet && \
+  export PYOPENGL_PLATFORM=egl && \
+  export TF_FORCE_GPU_ALLOW_GROWTH=true && \
+  export OMP_NUM_THREADS=4 && \
+  export WANDB_PROJECT=${WANDB_PROJECT} && \
+  torchrun \
+    --nproc_per_node=${NUM_GPUS} \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=localhost:0 \
+    palr_habitat/src/palr_trainer.py \
+      --config ${CONFIG} \
+      --seed ${SEED} \
+      --num_envs ${NUM_ENVS} \
+      --outdir ${OUTDIR} \
+      --resume auto
+"
+
 
 log "Training finished."
+
+# ${SG} exec \
+#     --nv \
+#     --bind "${PROJ_DIR}":/workspace \
+#     "${SIF}" \
+#     bash -c "
+#         cd /workspace
+#         export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
+#         export HABITAT_SIM_LOG=quiet
+#         export MAGNUM_LOG=quiet
+#         export PYOPENGL_PLATFORM=egl
+#         export TF_FORCE_GPU_ALLOW_GROWTH=true
+#         export OMP_NUM_THREADS=4
+#         export WANDB_PROJECT=${WANDB_PROJECT}
+
+#         torchrun \
+#             --nproc_per_node=${NUM_GPUS} \
+#             --rdzv_backend=c10d \
+#             --rdzv_endpoint=localhost:0 \
+#             palr_habitat/src/palr_trainer.py \
+#                 --config  ${CONFIG} \
+#                 --seed    ${SEED} \
+#                 --num_envs ${NUM_ENVS} \
+#                 --outdir  ${OUTDIR} \
+#                 --resume  auto
+#     "
+
+# log "Training finished."
+
+
+
