@@ -33,8 +33,11 @@ set -euo pipefail
 # All paths are relative to PROJ_DIR; override by setting env vars before
 # calling this script (e.g.  SEED=1 bash run_on_HPC.sh).
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJ_DIR="${PROJ_DIR:-${SCRIPT_DIR}}"          # project root (bound to /workspace)
+# Inside a SLURM job, BASH_SOURCE[0] resolves to the spool copy of the script
+# (/var/spool/slurm/jobXXX/), not the real project dir.  Use SLURM_SUBMIT_DIR
+# (set by sbatch to wherever you ran it) and fall back to dirname only for
+# interactive use.
+PROJ_DIR="${PROJ_DIR:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}}"
 SIF="${SIF:-${PROJ_DIR}/habitat_v3.sif}"       # where the built image lives
 DEF="${DEF:-${PROJ_DIR}/habitat_v3.def}"       # Singularity definition file
 
