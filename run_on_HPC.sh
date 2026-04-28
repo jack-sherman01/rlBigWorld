@@ -5,10 +5,13 @@
 #  1. Build habitat_v3.sif from habitat_v3.def if the SIF does not yet exist.
 #  2. Run PALR DD-PPO Fetch training inside the container.
 #
-#  Submit to SLURM:
+#  Submit to SLURM (single run):
 #    sbatch run_on_HPC.sh
 #  Or run interactively (after grabbing a GPU node):
 #    bash run_on_HPC.sh
+#
+#  Submit 3 parallel PALR jobs (seeds 0/1/2) — builds SIF first if needed:
+#    bash run_on_HPC.sh --sweep
 # =============================================================================
 
 # ── SLURM directives ──────────────────────────────────────────────────────────
@@ -40,8 +43,8 @@ DEF="${DEF:-${PROJ_DIR}/habitat_v3.def}"       # Singularity definition file
 SEED="${SEED:-0}"
 NUM_GPUS="${NUM_GPUS:-1}"
 NUM_ENVS="${NUM_ENVS:-16}"
-CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_fetch.yaml}" 
-# NOTE: config file relative to experiment name! change it to ddppo_baseline_fetch.yaml for baseline:
+CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_fetch.yaml}"
+# NOTE: change to ddppo_baseline_fetch.yaml for the baseline run:
 # CONFIG="${CONFIG:-palr_habitat/configs/ddppo_baseline_fetch.yaml}"
 
 OUTDIR="${OUTDIR:-results/palr_seed${SEED}}"
@@ -70,6 +73,35 @@ else
     SG=singularity
 fi
 log "Using container runtime: ${SG} ($(${SG} --version))"
+
+# ── Sweep mode ────────────────────────────────────────────────────────────────
+# Builds the SIF once (if needed), then submits 3 independent SLURM jobs —
+# seeds 0, 1, 2 — all for PALR. SLURM runs them in parallel as GPUs free up.
+if [[ "${1:-}" == "--sweep" ]]; then
+    mkdir -p "${PROJ_DIR}/logs"
+
+    if [[ ! -f "${SIF}" ]]; then
+        log "SIF not found — building before sweep …"
+        if [[ ! -f "${DEF}" ]]; then
+            log "ERROR: definition file not found: ${DEF}"; exit 1
+        fi
+        ${SG} build --fakeroot "${SIF}" "${DEF}"
+        log "Build complete: ${SIF}"
+    else
+        log "SIF already exists — skipping build: ${SIF}"
+    fi
+
+    for seed in 0 1 2; do
+        sbatch \
+            --job-name="palr_s${seed}" \
+            --output="${PROJ_DIR}/logs/palr_seed${seed}_%j.out" \
+            --error="${PROJ_DIR}/logs/palr_seed${seed}_%j.err" \
+            --export="ALL,SEED=${seed},OUTDIR=results/palr_seed${seed},CONFIG=palr_habitat/configs/ddppo_palr_fetch.yaml" \
+            "${BASH_SOURCE[0]}"
+        log "Submitted PALR seed=${seed} → results/palr_seed${seed}"
+    done
+    exit 0
+fi
 
 # ── Step 1: build SIF if absent ──────────────────────────────────────────────
 if [[ ! -f "${SIF}" ]]; then
