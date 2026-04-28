@@ -21,11 +21,11 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=3
 #SBATCH --cpus-per-task=16
-#SBATCH --gpus=1
+#SBATCH --gpus=1``
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpua
-#SBATCH --account=heng.zhang@iit.it
+#SBATCH --mail-user=heng.zhang@iit.it
 
 set -euo pipefail
 
