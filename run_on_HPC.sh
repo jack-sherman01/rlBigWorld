@@ -156,7 +156,8 @@ ${SG} exec \
                 --config  ${CONFIG} \
                 --seed    ${SEED} \
                 --num_envs ${NUM_ENVS} \
-                --outdir  ${OUTDIR}
+                --outdir  ${OUTDIR} \
+                --resume  auto
     "
 
 log "Training finished."

@@ -797,11 +797,41 @@ class PALRDDPPOTrainer:
         rnn_hidden = torch.zeros(1, self.num_envs, hidden_size, device=self.device)
         masks      = torch.ones(self.num_envs, 1, device=self.device)
 
+        # ── Resume from checkpoint ────────────────────────────────────────────
+        resume_path = self.args.resume
+        if resume_path == "auto":
+            import glob
+            ckpts = sorted(glob.glob(f"{self.outdir}/checkpoints/ckpt_*.pt"))
+            resume_path = ckpts[-1] if ckpts else ""
+
+        _resume_update_idx   = 0
+        _resume_total_steps  = 0
+        if resume_path and os.path.isfile(resume_path):
+            ckpt = torch.load(resume_path, map_location=self.device)
+            policy.module.load_state_dict(ckpt["policy"])
+            optimizer.load_state_dict(ckpt["optimizer"])
+            curriculum.load_state_dict(ckpt["curriculum"])
+            palr_state.lr_scales = np.array(ckpt["lr_scales"], dtype=np.float32)
+            palr_state.history   = ckpt.get("palr_history", [])
+            _resume_update_idx   = ckpt["update"]
+            _resume_total_steps  = ckpt["total_steps"]
+            if self.is_main:
+                print(f"[PALR] Resumed from {resume_path} "
+                      f"(update={_resume_update_idx}, "
+                      f"steps={_resume_total_steps:,d})", flush=True)
+        elif resume_path:
+            if self.is_main:
+                print(f"[PALR] WARNING: resume path not found: {resume_path} "
+                      f"— starting from scratch.", flush=True)
+        else:
+            if self.is_main:
+                print("[PALR] No checkpoint found — starting from scratch.", flush=True)
+
         # ── Stats ──────────────────────────────────────────────────────────────
         episode_rewards: List[float] = []
         episode_successes: List[float] = []
-        update_idx      = 0
-        total_env_steps = 0
+        update_idx      = _resume_update_idx
+        total_env_steps = _resume_total_steps
         total_episodes  = 0
         t_start = time.time()
 
@@ -1135,6 +1165,9 @@ def parse_args():
     p.add_argument("--steps",    type=int, default=200_000_000,
                    help="Total env steps (across all phases)")
     p.add_argument("--outdir",   default="results/run")
+    p.add_argument("--resume",   default="auto",
+                   help="Checkpoint .pt to resume from, 'auto' to pick the "
+                        "latest in outdir/checkpoints/, or '' to train from scratch")
     return p.parse_args()
 
 
