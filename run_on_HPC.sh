@@ -20,13 +20,13 @@
 #SBATCH --error=logs/palr_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --gpus=1
 #SBATCH --mem=32G
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 # Uncomment and adjust the partition / account for your cluster:
-##SBATCH --partition=gpu
-##SBATCH --account=your_account
+##SBATCH --partition=gpua
+##SBATCH --account=heng.zhang@iit.it
 
 set -euo pipefail
 
