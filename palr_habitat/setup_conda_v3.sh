@@ -78,7 +78,7 @@ echo ""
 echo "=== Step 5/5  Installing Python dependencies ==="
 conda run -n "${ENV}" pip install \
     "numpy<2" scipy matplotlib pandas \
-    tensorboard wandb \
+    tensorboard "wandb==0.15.12" \
     imageio "imageio-ffmpeg" \
     tqdm pyyaml gym
 
