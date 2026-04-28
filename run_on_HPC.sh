@@ -53,6 +53,9 @@ OUTDIR="${OUTDIR:-results/palr_seed${SEED}}"
 # used; override here only if running outside SLURM).
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
+# Weights & Biases
+WANDB_PROJECT="${WANDB_PROJECT:-palr-habitat}"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[run_on_HPC] $(date '+%Y-%m-%d %H:%M:%S')  $*"; }
 
@@ -143,6 +146,7 @@ ${SG} exec \
         export PYOPENGL_PLATFORM=egl
         export TF_FORCE_GPU_ALLOW_GROWTH=true
         export OMP_NUM_THREADS=4
+        export WANDB_PROJECT=${WANDB_PROJECT}
 
         torchrun \
             --nproc_per_node=${NUM_GPUS} \
