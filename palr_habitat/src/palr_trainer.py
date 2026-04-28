@@ -117,7 +117,13 @@ class RolloutStorage:
 
     def get_mini_batches(self, num_mini_batch):
         T, N = self.num_steps, self.num_envs
-        assert N % num_mini_batch == 0, "num_envs must be divisible by num_mini_batch"
+        # Clamp: can't have more mini-batches than envs.  When envs=1
+        # (smoke test), force a single full batch.
+        num_mini_batch = max(1, min(num_mini_batch, N))
+        assert N % num_mini_batch == 0, (
+            f"num_envs ({N}) must be divisible by num_mini_batch "
+            f"({num_mini_batch})"
+        )
         envs_per_batch = N // num_mini_batch
 
         perm = torch.randperm(N)
