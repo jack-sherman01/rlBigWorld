@@ -572,11 +572,26 @@ class PALRDDPPOTrainer:
         curriculum = make_curriculum_from_config(self.cfg["CURRICULUM"])
         palr_state = PALRState(self.palr_cfg)
 
-        # Import TensorBoard only on rank 0
+        # Import TensorBoard and wandb only on rank 0
         writer = None
         if self.is_main:
             from torch.utils.tensorboard import SummaryWriter
             writer = SummaryWriter(f"{self.outdir}/tb")
+
+            import wandb
+            wandb.init(
+                project=os.environ.get("WANDB_PROJECT", "palr-habitat"),
+                name=os.path.basename(self.outdir),
+                config={
+                    **self.cfg,
+                    "seed":      self.seed,
+                    "num_envs":  self.num_envs,
+                    "total_steps": self.total_steps,
+                    "outdir":    self.outdir,
+                },
+                dir=self.outdir,
+                resume="allow",
+            )
 
         # ── Build environments (rank-local) ───────────────────────────────────
         phase = curriculum.current_phase
@@ -969,6 +984,24 @@ class PALRDDPPOTrainer:
                             writer.add_scalar(f"palr/block{k}_lr_scale",
                                               float(palr_state.lr_scales[k]), total_env_steps)
 
+                    log_dict = {
+                        "train/mean_reward":  mean_r,
+                        "train/success_rate": mean_s,
+                        "train/fps":          fps,
+                        "train/update":       update_idx,
+                        "train/task":         curriculum.current_phase.label,
+                        **{f"ppo/{k}": v for k, v in ppo_logs.items()},
+                        **{f"palr/block{k}_dead":     plast_metrics[f"block_{k}_dead"]
+                           for k in range(4) if f"block_{k}_dead" in plast_metrics},
+                        **{f"palr/block{k}_erank":    plast_metrics[f"block_{k}_erank"]
+                           for k in range(4) if f"block_{k}_erank" in plast_metrics},
+                        **{f"palr/block{k}_lr_scale": float(palr_state.lr_scales[k])
+                           for k in range(4) if f"block_{k}_dead" in plast_metrics},
+                    }
+                    import wandb
+                    if wandb.run is not None:
+                        wandb.log(log_dict, step=total_env_steps)
+
             # ── Checkpoint ──────────────────────────────────────────────────────
             ckpt_interval = self.cfg.get("CHECKPOINT_INTERVAL", 500)
             if self.is_main and update_idx % ckpt_interval == 0:
@@ -989,6 +1022,10 @@ class PALRDDPPOTrainer:
         envs.close()
         if writer:
             writer.close()
+        if self.is_main:
+            import wandb
+            if wandb.run is not None:
+                wandb.finish()
 
         # Save final plasticity history
         if self.is_main:
