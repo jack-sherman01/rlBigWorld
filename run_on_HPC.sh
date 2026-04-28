@@ -25,7 +25,6 @@
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpua
-#SBATCH --mail-user=heng.zhang@iit.it
 
 set -euo pipefail
 
