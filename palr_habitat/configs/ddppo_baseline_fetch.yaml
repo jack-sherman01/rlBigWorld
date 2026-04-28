@@ -61,16 +61,16 @@ CURRICULUM:
   phases:
     - task:    "RearrangePickTask-v0"
       label:   "apple_pick"
-      dataset: "data/datasets/replica_cad/v2/train/rearrange.json.gz"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/rearrange.json.gz"
     - task:    "RearrangePickTask-v0"
       label:   "bowl_pick"
-      dataset: "data/datasets/replica_cad/v2/train/rearrange_easy.json.gz"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/rearrange_easy.json.gz"
     - task:    "RearrangeOpenFridgeTask-v0"
       label:   "open_fridge"
-      dataset: "data/datasets/replica_cad/v2/train/in_fridge_1k_100.json.gz"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/in_fridge_1k_100.json.gz"
     - task:    "RearrangePlaceTask-v0"
       label:   "sink_place"
-      dataset: "data/datasets/replica_cad/v2/train/all_receptacles_10k_1k.json.gz"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/all_receptacles_10k_1k.json.gz"
 
 TASK_CONFIG:
   TASK:

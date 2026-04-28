@@ -15,7 +15,7 @@ ENVIRONMENT:
 DATASET:
   TYPE: RearrangeDataset-v0
   SPLIT: train
-  DATA_PATH: "data/datasets/replica_cad/v2/train/rearrange.json.gz"
+  DATA_PATH: "palr_habitat/data/datasets/replica_cad/v2/train/rearrange.json.gz"
   SCENES_DIR: "data/"
 
 TASK:
@@ -48,11 +48,11 @@ TASK:
 
 SIMULATOR:
   TYPE: RearrangeSim-v0
-  SCENE: "data/replica_cad/configs/scenes/v3_sc1_staging_00.scene_instance.json"
-  SCENE_DATASET: "data/replica_cad/replicaCAD.scene_dataset_config.json"
+  SCENE: "palr_habitat/data/replica_cad/configs/scenes/v3_sc1_staging_00.scene_instance.json"
+  SCENE_DATASET: "palr_habitat/data/replica_cad/replicaCAD.scene_dataset_config.json"
   SEED: 0
   ADDITIONAL_OBJECT_PATHS:
-    - "data/objects/ycb/configs/"
+    - "palr_habitat/data/objects/ycb/configs/"
 
   HABITAT_SIM_V0:
     GPU_DEVICE_ID: 0
