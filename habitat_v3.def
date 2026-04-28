@@ -1,0 +1,233 @@
+# =============================================================================
+#  habitat_v3.def
+#
+#  Singularity definition for the "palr_habitat_v3" environment.
+#
+#  Stack:
+#    Python       3.9
+#    habitat-sim  0.3.2   (EGL headless, Bullet physics)
+#    habitat-lab  0.3.220241205
+#    habitat-baselines 0.3.220241205
+#    PyTorch      2.3.1+cu121
+#    torchvision  0.18.1+cu121
+#    CUDA base    12.1.1 / cuDNN 8 / Ubuntu 22.04
+#
+#  Build:
+#    singularity build habitat_v3.sif habitat_v3.def
+#
+#  Run training (bind your project dir to /workspace):
+#    singularity exec --nv \
+#        --bind /home/hzhang/work/rlBigWorld:/workspace \
+#        habitat_v3.sif \
+#        bash -c "cd /workspace && \
+#            CUDA_VISIBLE_DEVICES=0 \
+#            torchrun --nproc_per_node=1 \
+#                palr_habitat/src/palr_trainer.py \
+#                --config palr_habitat/configs/ddppo_palr_fetch.yaml \
+#                --seed 0 --outdir results/palr_seed0"
+# =============================================================================
+
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+# ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+%labels
+    Maintainer       PALR Team
+    Version          1.0.0
+    Description      PALR Habitat v3 — DD-PPO Fetch Rearrangement with plasticity-aware LR
+    CUDA_version     12.1.1
+    Python_version   3.9
+    habitat_sim      0.3.2 (EGL headless + Bullet)
+    PyTorch_version  2.3.1+cu121
+
+# ---------------------------------------------------------------------------
+# Environment variables (exported at runtime)
+# ---------------------------------------------------------------------------
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Conda / env
+    export CONDA_DIR=/opt/miniforge3
+    export PATH=/opt/miniforge3/envs/palr_habitat_v3/bin:/opt/miniforge3/bin:$PATH
+
+    # CUDA
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+    # Habitat — silence the Magnum/EGL log spam
+    export HABITAT_SIM_LOG=quiet
+    export MAGNUM_LOG=quiet
+
+    # Force EGL headless rendering (required for habitat-sim without display)
+    export PYOPENGL_PLATFORM=egl
+
+    # Prevent TF (or TF-linked libs that habitat pulls) from hoarding VRAM
+    export TF_FORCE_GPU_ALLOW_GROWTH=true
+
+    # torchrun / distributed
+    export OMP_NUM_THREADS=4
+
+# ---------------------------------------------------------------------------
+# Build steps
+# ---------------------------------------------------------------------------
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_DIR=/opt/miniforge3
+
+    # ── 1. System packages ────────────────────────────────────────────────────
+    # EGL headless OpenGL (habitat-sim uses EGL for off-screen rendering).
+    # libglib2.0-0 / libsm6 / libxext6 / libxrender1 are pulled in by many
+    # Python image-processing wheels.  ffmpeg is needed by imageio-ffmpeg.
+    apt-get update -qq
+    apt-get install -y --no-install-recommends \
+        wget \
+        curl \
+        git \
+        bzip2 \
+        ca-certificates \
+        libgl1-mesa-glx \
+        libegl1-mesa \
+        libgles2-mesa \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+        libx11-6 \
+        libxcb1 \
+        libgomp1 \
+        ffmpeg
+    rm -rf /var/lib/apt/lists/*
+
+    # ── 2. Miniforge (conda + mamba) ──────────────────────────────────────────
+    wget -q \
+        https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+        -O /tmp/miniforge.sh
+    bash /tmp/miniforge.sh -b -p ${CONDA_DIR}
+    rm /tmp/miniforge.sh
+
+    # Initialise conda so subsequent conda/mamba commands work in this shell
+    . ${CONDA_DIR}/etc/profile.d/conda.sh
+    conda update -n base -c defaults conda -y --quiet
+
+    # ── 3. Create conda env and install habitat-sim 0.3.2 ────────────────────
+    # habitat-sim MUST be installed via conda (aihabitat channel) — it is
+    # a pre-built C++ binary with EGL headless support baked in.
+    # "withbullet" enables Bullet physics; "headless" selects the EGL build.
+    conda create -n palr_habitat_v3 python=3.9 -y --quiet
+    conda install -n palr_habitat_v3 \
+        -c aihabitat \
+        -c conda-forge \
+        habitat-sim=0.3.2 \
+        withbullet \
+        headless \
+        -y
+
+    # Convenience shorthands for the env's pip / python
+    ENV_PIP=${CONDA_DIR}/envs/palr_habitat_v3/bin/pip
+    ENV_PYTHON=${CONDA_DIR}/envs/palr_habitat_v3/bin/python
+
+    # ── 4. PyTorch 2.3.1 + CUDA 12.1 ─────────────────────────────────────────
+    # cu121 wheels are forward-compatible with CUDA 12.x drivers (>= 525).
+    ${ENV_PIP} install --quiet \
+        torch==2.3.1+cu121 \
+        torchvision==0.18.1+cu121 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+    # ── 5. Habitat-lab + habitat-baselines ────────────────────────────────────
+    ${ENV_PIP} install --quiet \
+        habitat-lab==0.3.220241205 \
+        habitat-baselines==0.3.220241205
+
+    # ── 6. Remaining Python dependencies ──────────────────────────────────────
+    # scikit-learn: used in plasticity_metrics_cnn.py (randomized_svd);
+    #               falls back to numpy SVD if missing, but preferred.
+    # wandb pinned to 0.15.12 to match what the training scripts expect.
+    ${ENV_PIP} install --quiet \
+        "numpy<2" \
+        scipy \
+        matplotlib \
+        pandas \
+        tensorboard \
+        "wandb==0.15.12" \
+        imageio \
+        "imageio-ffmpeg" \
+        tqdm \
+        pyyaml \
+        gym \
+        scikit-learn
+
+    # ── 7. Cleanup ────────────────────────────────────────────────────────────
+    conda clean -afy
+    ${ENV_PIP} cache purge
+
+    # ── 8. Sanity smoke test ──────────────────────────────────────────────────
+    # Confirms the three critical imports work before the image is sealed.
+    # Note: cannot test CUDA availability here (no GPU during build).
+    ${ENV_PYTHON} - <<'PYEOF'
+import habitat
+import habitat_sim
+import torch
+import torchvision
+import wandb
+import imageio
+import sklearn
+print("habitat        :", habitat.__version__)
+print("habitat_sim    :", habitat_sim.__version__)
+print("torch          :", torch.__version__, "/ cuda toolkit:", torch.version.cuda)
+print("torchvision    :", torchvision.__version__)
+print("wandb          :", wandb.__version__)
+print("imageio        :", imageio.__version__)
+print("scikit-learn   :", sklearn.__version__)
+print("Smoke test PASSED")
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Default runscript: launch the env's Python interpreter
+# ---------------------------------------------------------------------------
+%runscript
+    exec /opt/miniforge3/envs/palr_habitat_v3/bin/python "$@"
+
+# ---------------------------------------------------------------------------
+# Help text (shown by: singularity run-help habitat_v3.sif)
+# ---------------------------------------------------------------------------
+%help
+    PALR Habitat v3 Singularity container.
+
+    Software stack
+    ──────────────
+      Python          3.9
+      habitat-sim     0.3.2  (EGL headless, Bullet physics)
+      habitat-lab     0.3.220241205
+      habitat-baselines 0.3.220241205
+      PyTorch         2.3.1+cu121
+      torchvision     0.18.1+cu121
+      wandb           0.15.12
+      scikit-learn    (latest)
+
+    Build
+    ─────
+      singularity build habitat_v3.sif habitat_v3.def
+
+    Run the PALR Fetch training
+    ───────────────────────────
+      singularity exec --nv \
+          --bind /home/hzhang/work/rlBigWorld:/workspace \
+          habitat_v3.sif \
+          bash -c "
+              cd /workspace
+              CUDA_VISIBLE_DEVICES=0 \
+              torchrun --nproc_per_node=1 \
+                  palr_habitat/src/palr_trainer.py \
+                  --config palr_habitat/configs/ddppo_palr_fetch.yaml \
+                  --seed 0 --outdir results/palr_seed0
+          "
+
+    Notes
+    ─────
+      * Always pass --nv so Singularity injects the host NVIDIA driver / EGL ICD.
+      * Bind your project root to /workspace (or any path you prefer).
+      * HABITAT_SIM_LOG=quiet and MAGNUM_LOG=quiet suppress EGL/Magnum verbosity.
+      * PYOPENGL_PLATFORM=egl forces EGL headless rendering (no display required).
+      * For multi-GPU runs change --nproc_per_node and CUDA_VISIBLE_DEVICES accordingly.
