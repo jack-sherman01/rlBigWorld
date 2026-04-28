@@ -429,6 +429,9 @@ class PALRDDPPOTrainer:
         os.makedirs(self.outdir, exist_ok=True)
         os.makedirs(f"{self.outdir}/checkpoints", exist_ok=True)
         os.makedirs(f"{self.outdir}/videos", exist_ok=True)
+        # habitat hardcodes 'data/default.physics_config.json' as the path for
+        # its auto-generated physics config regardless of our data dir setting.
+        os.makedirs("data", exist_ok=True)
 
     # ── Setup ──────────────────────────────────────────────────────────────────
 
