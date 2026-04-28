@@ -597,10 +597,14 @@ class PALRDDPPOTrainer:
             else:
                 obs, _, done, _ = step_out
 
-            # depth → normalised uint8 RGB frame
-            depth = obs["head_depth"][:, :, 0]            # [H, W]
-            frame = (np.clip(depth / 10.0, 0, 1) * 255).astype(np.uint8)
-            frames.append(np.stack([frame, frame, frame], axis=-1))  # [H,W,3]
+            # depth → uint8 greyscale frame.
+            # Habitat depth sensor returns normalised values in [0, 1]
+            # (1.0 == max_depth, typically 10 m).  NaN/inf appear for
+            # out-of-range pixels; replace them with 0 before scaling.
+            depth = obs["head_depth"][:, :, 0]                         # [H, W]
+            depth = np.nan_to_num(depth, nan=0.0, posinf=1.0, neginf=0.0)
+            frame = (np.clip(depth, 0.0, 1.0) * 255).astype(np.uint8)
+            frames.append(np.stack([frame, frame, frame], axis=-1))    # [H,W,3]
 
             mask = torch.tensor([[0.0 if done else 1.0]], device=self.device)
             if done:
