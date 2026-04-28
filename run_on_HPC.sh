@@ -21,7 +21,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=3
 #SBATCH --cpus-per-task=16
-#SBATCH --gpus=1``
+#SBATCH --gpus=1
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpua
@@ -141,6 +141,7 @@ cd $SLURM_SUBMIT_DIR
 
 container_path=/work/hezhang/hrii/singularity_Mujoco_Reflexive/containerReflexRL.sif
 
+# Note: the following source ~/miniforge3/etc/profile.d/conda.sh only works for Heng.
 singularity exec --nv $container_path bash -c "
   source ~/miniforge3/etc/profile.d/conda.sh && \
   conda activate palr_habitat_v3 && \
