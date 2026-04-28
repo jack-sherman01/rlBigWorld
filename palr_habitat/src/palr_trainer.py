@@ -147,16 +147,45 @@ class RolloutStorage:
 
 # ── VectorEnv wrapper ─────────────────────────────────────────────────────────
 
-# Map task_type strings → bundled habitat hydra configs (shipped inside the
-# installed habitat-lab package: habitat/config/benchmark/rearrange/*.yaml).
-# habitat-lab >= 0.2.3 uses a hydra-based config system, so we cannot point
-# `habitat.get_config` at an arbitrary local YAML — it must be a path that
-# the bundled hydra search path can resolve.
-_TASK_TO_CONFIG = {
-    "RearrangePickTask-v0":       "benchmark/rearrange/pick.yaml",
-    "RearrangePlaceTask-v0":      "benchmark/rearrange/place.yaml",
-    "RearrangeOpenFridgeTask-v0": "benchmark/rearrange/open_fridge.yaml",
+# Map task_type strings → list of candidate hydra config paths.  The path
+# layout differs between habitat-lab versions:
+#   - 0.2.5 :  benchmark/rearrange/pick.yaml
+#   - 0.3.x :  benchmark/rearrange/skills/pick.yaml
+# We try each candidate in order and pick the first one that resolves.
+_TASK_TO_CONFIG_CANDIDATES = {
+    "RearrangePickTask-v0": [
+        "benchmark/rearrange/skills/pick.yaml",   # 0.3.x
+        "benchmark/rearrange/pick.yaml",          # 0.2.5
+    ],
+    "RearrangePlaceTask-v0": [
+        "benchmark/rearrange/skills/place.yaml",
+        "benchmark/rearrange/place.yaml",
+    ],
+    "RearrangeOpenFridgeTask-v0": [
+        "benchmark/rearrange/skills/open_fridge.yaml",
+        "benchmark/rearrange/open_fridge.yaml",
+    ],
 }
+
+
+def _resolve_task_config(task_type: str):
+    """Return the first habitat hydra config path that exists for this task."""
+    import habitat
+    candidates = _TASK_TO_CONFIG_CANDIDATES.get(task_type)
+    if not candidates:
+        raise ValueError(f"Unsupported task_type {task_type!r}")
+    last_err = None
+    for path in candidates:
+        try:
+            habitat.get_config(path)
+            return path
+        except Exception as e:  # hydra raises various MissingConfigException etc.
+            last_err = e
+            continue
+    raise RuntimeError(
+        f"None of the candidate configs resolved for task_type={task_type!r}: "
+        f"{candidates}.  Last error: {last_err}"
+    )
 
 
 def _make_single_env(task_type: str, dataset_path: str,
@@ -169,12 +198,7 @@ def _make_single_env(task_type: str, dataset_path: str,
     import habitat
     from habitat.config.read_write import read_write
 
-    config_path = _TASK_TO_CONFIG.get(task_type)
-    if config_path is None:
-        raise ValueError(
-            f"Unsupported task_type {task_type!r}; "
-            f"add it to _TASK_TO_CONFIG."
-        )
+    config_path = _resolve_task_config(task_type)
 
     cfg = habitat.get_config(config_path)
     with read_write(cfg):
@@ -270,6 +294,18 @@ def make_env_fn(task_type: str, dataset_path: str, seed: int, rank: int, env_idx
     def _init():
         return _make_single_env(task_type, dataset_path, seed, rank, env_idx)
     return _init
+
+
+# ── Robust restart support ────────────────────────────────────────────────────
+
+# These exceptions are what habitat.VectorEnv raises when a worker dies in
+# native code (SIGABRT/SIGSEGV inside habitat-sim's C++ render path).  We
+# catch them and rebuild the VectorEnv instead of letting the trainer die.
+_VECTORENV_CRASH_EXC = (EOFError, ConnectionResetError, BrokenPipeError, OSError)
+
+
+class _VectorEnvCrash(RuntimeError):
+    """Raised when a habitat.VectorEnv worker has died unrecoverably."""
 
 
 # ── PALR logic ────────────────────────────────────────────────────────────────
@@ -661,7 +697,26 @@ class PALRDDPPOTrainer:
         )
 
         # ── Collect initial observations ──────────────────────────────────────
-        obs_list = envs.reset()
+        # Wrap reset in a small retry: very rarely the first reset() right
+        # after VectorEnv spawn races with worker EGL init and crashes.
+        _init_retry = int(os.environ.get("PALR_INIT_RESET_RETRY", "3"))
+        for _attempt in range(_init_retry):
+            try:
+                obs_list = envs.reset()
+                break
+            except _VECTORENV_CRASH_EXC as _e:
+                if self.is_main:
+                    print(f"[PALR] initial reset failed (attempt "
+                          f"{_attempt+1}/{_init_retry}): "
+                          f"{type(_e).__name__}: {_e}.  Rebuilding envs.",
+                          flush=True)
+                try:
+                    envs.close()
+                except Exception:
+                    pass
+                envs = make_envs(phase.task_type, phase.dataset_path)
+        else:
+            raise RuntimeError("[PALR] envs.reset() failed after retries")
         for k in obs_shapes:
             t = torch.from_numpy(np.stack([o[k] for o in obs_list])).to(self.device)
             rollouts.obs[k][0].copy_(t)
@@ -678,6 +733,10 @@ class PALRDDPPOTrainer:
 
         # Per-env accumulators for episode returns (reset at done boundaries)
         running_ep_returns = np.zeros(self.num_envs, dtype=np.float32)
+
+        # Timestamps of recent VectorEnv crashes (for circuit breaker).
+        # See try/except _VectorEnvCrash inside the rollout loop below.
+        restart_history: List[float] = []
 
         if self.is_main:
             print(f"[PALR] entering training loop: "
@@ -716,7 +775,8 @@ class PALRDDPPOTrainer:
             if self.is_main:
                 print(f"[PALR] update {update_idx}: starting rollout "
                       f"(env_steps so far={total_env_steps})", flush=True)
-            with torch.no_grad():
+            try:
+              with torch.no_grad():
                 for step in range(self.num_steps):
                     obs_b = {k: rollouts.obs[k][step] for k in obs_shapes}
                     rnn_h = rollouts.rnn_hidden[step]
@@ -733,7 +793,13 @@ class PALRDDPPOTrainer:
                     actions_np = np.clip(actions_np, act_low, act_high)
                     # habitat.VectorEnv.step returns List[(obs, reward, done, info)]
                     # of length num_envs — must zip-unpack into 4 columns.
-                    step_results = envs.step(actions_np)
+                    try:
+                        step_results = envs.step(actions_np)
+                    except _VECTORENV_CRASH_EXC as _e:
+                        raise _VectorEnvCrash(
+                            f"envs.step at rollout step={step}: "
+                            f"{type(_e).__name__}: {_e}"
+                        ) from _e
                     obs_list, rewards, dones, infos = zip(*step_results)
 
                     if self.is_main and heartbeat_every > 0 and \
@@ -786,6 +852,62 @@ class PALRDDPPOTrainer:
                 _, next_value, _ = policy.module.forward(
                     obs_last, rollouts.rnn_hidden[-1], rollouts.masks[-1]
                 )
+            except _VectorEnvCrash as crash:
+                # ── habitat-sim worker died in C++.  Rebuild VectorEnv and
+                #    discard this incomplete rollout.  See KNOWN_ISSUES.md
+                #    "habitat-sim 0.2.5 EGL SIGABRT".
+                restart_history.append(time.time())
+                # Circuit breaker: too many crashes in a short window → bail
+                window = float(os.environ.get("PALR_RESTART_WINDOW_SEC", "300"))
+                limit  = int(os.environ.get("PALR_RESTART_LIMIT", "10"))
+                recent = [t for t in restart_history if time.time() - t < window]
+                restart_history[:] = recent
+                if self.is_main:
+                    print(f"[PALR][RESTART {len(restart_history)}] "
+                          f"VectorEnv crash: {crash}.  "
+                          f"recent_in_{int(window)}s={len(recent)}/{limit}.  "
+                          f"rebuilding envs and discarding partial rollout.",
+                          flush=True)
+                if len(recent) >= limit:
+                    raise RuntimeError(
+                        f"[PALR] restart circuit-breaker tripped: "
+                        f"{len(recent)} VectorEnv crashes in {int(window)}s. "
+                        f"Aborting to avoid wasted compute."
+                    ) from crash
+
+                # Tear down the broken VectorEnv (best-effort).
+                try:
+                    envs.close()
+                except Exception:
+                    pass
+                # Forcefully clean stale shm/zombie children every few restarts.
+                try:
+                    import gc
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
+                # Rebuild and re-seed obs buffer at t=0.
+                envs = make_envs(curriculum.current_phase.task_type,
+                                 curriculum.current_phase.dataset_path)
+                obs_list = envs.reset()
+                for k in obs_shapes:
+                    t = torch.from_numpy(
+                        np.stack([o[k] for o in obs_list])
+                    ).to(self.device)
+                    rollouts.obs[k][0].copy_(t)
+                rollouts.masks[0].fill_(1.0)
+                rollouts.rnn_hidden[0].zero_()
+                running_ep_returns[:] = 0.0
+
+                if writer is not None:
+                    writer.add_scalar("train/restart_count",
+                                      len(restart_history), total_env_steps)
+
+                # Skip ppo_update / measure_plasticity for this iteration —
+                # the partial rollout in the buffer is invalid.
+                continue
 
             rollouts.compute_returns(next_value.detach())
 
