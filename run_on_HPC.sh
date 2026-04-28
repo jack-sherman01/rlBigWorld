@@ -25,8 +25,8 @@
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
 # Uncomment and adjust the partition / account for your cluster:
-##SBATCH --partition=gpua
-##SBATCH --account=heng.zhang@iit.it
+#SBATCH --partition=gpua
+#SBATCH --account=heng.zhang@iit.it
 
 set -euo pipefail
 
