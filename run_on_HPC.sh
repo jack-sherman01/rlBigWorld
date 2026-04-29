@@ -56,6 +56,8 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 # Weights & Biases
 WANDB_PROJECT="${WANDB_PROJECT:-palr-habitat}"
+WANDB_ENTITY="${WANDB_ENTITY:-palr-habitat}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-palr-ours}" # change to "palr-baseline" for the baseline run
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[run_on_HPC] $(date '+%Y-%m-%d %H:%M:%S')  $*"; }
@@ -153,6 +155,8 @@ singularity exec --nv $container_path bash -c "
   export TF_FORCE_GPU_ALLOW_GROWTH=true && \
   export OMP_NUM_THREADS=4 && \
   export WANDB_PROJECT=${WANDB_PROJECT} && \
+  export WANDB_ENTITY=${WANDB_ENTITY} && \
+  export WANDB_RUN_NAME=${WANDB_RUN_NAME} && \
   torchrun \
     --nproc_per_node=${NUM_GPUS} \
     --rdzv_backend=c10d \

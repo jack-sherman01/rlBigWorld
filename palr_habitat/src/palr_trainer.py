@@ -641,9 +641,13 @@ class PALRDDPPOTrainer:
 
             try:
                 import wandb
+                _run_name = os.environ.get("WANDB_RUN_NAME", os.path.basename(self.outdir))
+                if self.seed is not None:
+                    _run_name = f"{_run_name}_seed{self.seed}"
                 wandb.init(
                     project=os.environ.get("WANDB_PROJECT", "palr-habitat"),
-                    name=os.path.basename(self.outdir),
+                    entity=os.environ.get("WANDB_ENTITY") or None,
+                    name=_run_name,
                     config={
                         **self.cfg,
                         "seed":      self.seed,
