@@ -1,0 +1,112 @@
+# =============================================================================
+#  configs/ddppo_palr_lr_only_fetch.yaml
+#
+#  Ablation A: LR scaling only — no dead-filter perturbation.
+#  Perturbation threshold set to 2.0 (unreachable) so it never fires.
+# =============================================================================
+
+BASE_TASK_CONFIG_PATH: "configs/rearrange_base.yaml"
+
+TRAINER_NAME: "ddppo"
+ENV_NAME: "RearrangePickTask-v0"
+
+NUM_ENVIRONMENTS: 16
+TOTAL_NUM_STEPS: 2.0e8
+NUM_UPDATES: -1
+
+CHECKPOINT_FOLDER: "results/checkpoints"
+TENSORBOARD_DIR:   "results/tb"
+LOG_FILE:          "results/train.log"
+LOG_INTERVAL:      10
+CHECKPOINT_INTERVAL: 500
+
+VIDEO_OPTION: []
+
+RL:
+  SUCCESS_REWARD: 10.0
+  SLACK_REWARD: -0.001
+
+  PPO:
+    clip_param:      0.2
+    ppo_epoch:       2
+    num_mini_batch:  2
+    value_loss_coef: 0.5
+    entropy_coef:    0.01
+    lr:              2.5e-4
+    eps:             1.0e-5
+    max_grad_norm:   0.2
+    use_linear_lr_decay:   true
+    use_linear_clip_decay: true
+
+  DDPPO:
+    sync_frac:             0.6
+    distrib_backend:       "NCCL"
+    rnn_type:              "GRU"
+    num_recurrent_layers:  1
+    backbone:              "resnet18"
+    pretrained_weights:    ""
+    pretrained:            false
+    reset_critic:          false
+    force_distributed:     true
+
+  ROLLOUT_STORAGE:
+    num_steps: 64
+
+PALR:
+  enabled:           true
+
+  measure_freq:      200
+  diag_batch_size:   256
+
+  beta:              3.0
+  rank_beta:         1.5
+  max_lr_scale:      5.0
+
+  perturb_threshold: 2.0          # never triggers (dead fraction is in [0,1])
+  perturb_sigma:     0.3
+
+  baseline_dead:     0.0
+  baseline_erank:    [48.0, 96.0, 192.0, 384.0]
+
+CURRICULUM:
+  steps_per_phase: 50000000
+  phases:
+    - task:    "RearrangePickTask-v0"
+      label:   "apple_pick"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/rearrange.json.gz"
+    - task:    "RearrangePickTask-v0"
+      label:   "bowl_pick"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/rearrange_easy.json.gz"
+    - task:    "RearrangeOpenFridgeTask-v0"
+      label:   "open_fridge"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/in_fridge_1k_100.json.gz"
+    - task:    "RearrangePlaceTask-v0"
+      label:   "sink_place"
+      dataset: "palr_habitat/data/datasets/replica_cad/v2/train/all_receptacles_10k_1k.json.gz"
+
+TASK_CONFIG:
+  TASK:
+    MEASUREMENTS:
+      - "REARRANGE_PICK_REWARD"
+      - "REARRANGE_PICK_SUCCESS"
+      - "NUM_STEPS"
+    SENSORS:
+      - "JOINT_SENSOR"
+      - "IS_HOLDING_SENSOR"
+      - "TARGET_START_GPS_COMPASS_SENSOR"
+      - "TARGET_GOAL_GPS_COMPASS_SENSOR"
+  SIMULATOR:
+    AGENT_0:
+      SENSORS: ["HEAD_RGB_SENSOR", "HEAD_DEPTH_SENSOR"]
+    HEAD_RGB_SENSOR:
+      WIDTH:  128
+      HEIGHT: 128
+    HEAD_DEPTH_SENSOR:
+      WIDTH:  128
+      HEIGHT: 128
+
+SUCCESS_MEASURE_KEYS:
+  - "rearrange_pick_success"
+  - "rearrange_place_success"
+  - "rearrange_open_fridge_success"
+  - "success"
