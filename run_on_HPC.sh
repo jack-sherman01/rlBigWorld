@@ -43,7 +43,7 @@ DEF="${DEF:-${PROJ_DIR}/habitat_v3.def}"       # Singularity definition file
 # Training knobs
 SEED="${SEED:-0}"
 NUM_GPUS="${NUM_GPUS:-1}"
-NUM_ENVS="${NUM_ENVS:-16}"
+NUM_ENVS="${NUM_ENVS:-10}"
 CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_fetch.yaml}"
 # NOTE: change to ddppo_baseline_fetch.yaml for the baseline run:
 # CONFIG="${CONFIG:-palr_habitat/configs/ddppo_baseline_fetch.yaml}"
