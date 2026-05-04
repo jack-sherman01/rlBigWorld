@@ -1,71 +1,41 @@
 #!/usr/bin/env bash
-# **** Usage: apply for GPU resources on the cluster, then run this script to launch training.
-# Run a single training run:
-# method includes: baseline, palr, palr_lr_only, palr_per_perturb_only
-# bash run_interactive.sh --method palr --seed 0
-# bash run_interactive.sh --method palr --seed 1
-# bash run_interactive.sh --method palr --seed 2
-# **** Usage: Run a parallel sweep over seeds 0, 1, 2 (each on a different GPU):
-# bash run_interactive.sh --method palr --sweep
-
-
 set -euo pipefail
 
 PROJ_DIR="${PROJ_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
-# ── Argument parsing ──────────────────────────────────────────────────────────
-METHOD="baseline" # default method
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --method)
-            METHOD="$2"
-            shift 2
-            ;;
-        --sweep)
-            SWEEP=1
-            shift
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
 # Training knobs
 SEED="${SEED:-0}"
-NUM_GPUS="${NUM_GPUS:-1}"
+NUM_GPUS="${NUM_GPUS:-3}"
 NUM_ENVS="${NUM_ENVS:-4}"
-CONFIG="${CONFIG:-palr_habitat/configs/ddppo_${METHOD}_fetch.yaml}"
-OUTDIR="${OUTDIR:-results/${METHOD}_seed${SEED}}"
+CONFIG="${CONFIG:-palr_habitat/configs/ddppo_baseline_fetch.yaml}"
+OUTDIR="${OUTDIR:-results/baseline_seed${SEED}}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 # Weights & Biases
 WANDB_PROJECT="${WANDB_PROJECT:-palr-habitat}"
 WANDB_ENTITY="${WANDB_ENTITY:-palr-habitat}"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-${METHOD}}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-baseline}"
 
 container_path=/work/hezhang/hrii/singularity_rlBigWorld/torch2_3.sif
 
 log() { echo "[run_local] $(date '+%Y-%m-%d %H:%M:%S')  $*"; }
 
 # ── Parallel sweep mode ───────────────────────────────────────────────────────
-if [[ "${SWEEP:-0}" == "1" ]]; then
+# Runs seeds 0, 1, 2 in parallel on GPUs 0, 1, 2.
+if [[ "${1:-}" == "--sweep" ]]; then
     mkdir -p "${PROJ_DIR}/logs"
 
     for seed in 0 1 2; do
         gpu="${seed}"
 
-        log "===== Starting ${METHOD} seed=${seed} on GPU ${gpu} ====="
+        log "===== Starting seed=${seed} on GPU ${gpu} ====="
 
         SEED="${seed}" \
         CUDA_VISIBLE_DEVICES="${gpu}" \
-        NUM_GPUS=1 \
-        CONFIG="palr_habitat/configs/ddppo_${METHOD}_fetch.yaml" \
-        OUTDIR="results/${METHOD}_seed${seed}" \
-        WANDB_RUN_NAME="${METHOD}_seed${seed}" \
+        OUTDIR="results/baseline_seed${seed}" \
+        WANDB_RUN_NAME="${WANDB_RUN_NAME}_seed${seed}" \
             bash "${BASH_SOURCE[0]}" \
-            2>&1 | tee "${PROJ_DIR}/logs/${METHOD}_seed${seed}.log" &
+            2>&1 | tee "${PROJ_DIR}/logs/baseline_seed${seed}.log" &
     done
 
     wait
@@ -78,8 +48,7 @@ mkdir -p "${PROJ_DIR}/${OUTDIR}/checkpoints"
 mkdir -p "${PROJ_DIR}/${OUTDIR}/videos"
 mkdir -p "${PROJ_DIR}/logs"
 
-log "Launching training: method=${METHOD} seed=${SEED} gpu=${CUDA_VISIBLE_DEVICES} gpus=${NUM_GPUS}"
-log "Config: ${CONFIG}"
+log "Launching training: seed=${SEED} gpu=${CUDA_VISIBLE_DEVICES} gpus=${NUM_GPUS} envs=${NUM_ENVS} config=${CONFIG}"
 log "Output: ${PROJ_DIR}/${OUTDIR}"
 
 singularity exec --disable-cache --nv "${container_path}" bash -c "
@@ -115,4 +84,4 @@ singularity exec --disable-cache --nv "${container_path}" bash -c "
       --resume auto
 "
 
-log "Training finished (method=${METHOD}, seed=${SEED})."
+log "Training finished (seed=${SEED})."

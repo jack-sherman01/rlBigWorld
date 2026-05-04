@@ -32,7 +32,7 @@ import numpy as np
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 import metaworld
-from metaworld import MT50
+from metaworld import MT10
 
 
 # ── Canonical CW10 task order ────────────────────────────────────────────────
@@ -48,22 +48,6 @@ CW10_TASKS = [
     "peg-insert-side-v3",
     "window-open-v3",
     "window-close-v3",
-]
-
-# ── Canonical CW20 task order ────────────────────────────────────────────────
-# CW10 + 10 additional tasks from MT50 (following Wolczyk et al. 2021 ordering)
-
-CW20_TASKS = CW10_TASKS + [
-    "door-close-v3",
-    "reach-wall-v3",
-    "pick-place-wall-v3",
-    "push-wall-v3",
-    "button-press-v3",
-    "button-press-topdown-wall-v3",
-    "button-press-wall-v3",
-    "peg-unplug-side-v3",
-    "disassemble-v3",
-    "hammer-v3",
 ]
 
 
@@ -93,17 +77,17 @@ class ContinualWorld:
         self.max_steps         = max_steps
         self.seed              = seed
 
-        # Build one env per task using MT50 (superset of MT10, supports CW10+CW20)
-        mt50 = MT50(seed=seed)
+        # Build one env per task and sample a fixed task configuration
+        mt10 = MT10(seed=seed)
         self._envs: list  = []
         self._tasks: list = []
 
         for name in self.task_names:
-            env_cls = mt50.train_classes[name]
+            env_cls = mt10.train_classes[name]
             env     = env_cls()
             # Pick the first task configuration that matches this env name
             task = next(
-                t for t in mt50.train_tasks if t.env_name == name
+                t for t in mt10.train_tasks if t.env_name == name
             )
             env.set_task(task)
             self._envs.append(env)

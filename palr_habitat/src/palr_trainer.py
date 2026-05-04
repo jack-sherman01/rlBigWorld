@@ -575,7 +575,7 @@ class PALRDDPPOTrainer:
 
     @torch.no_grad()
     def _record_episode(self, policy: nn.Module, phase, tag: str) -> None:
-        """Run one greedy episode in a fresh env and save an RGB video."""
+        """Run one greedy episode in a fresh env and save a depth video."""
         import imageio
 
         video_path = f"{self.outdir}/videos/{tag}.mp4"
@@ -604,15 +604,14 @@ class PALRDDPPOTrainer:
             else:
                 obs, _, done, _ = step_out
 
-            # Use RGB sensor for color video; fall back to depth greyscale if absent.
-            if "head_rgb" in obs:
-                frame = obs["head_rgb"].astype(np.uint8)               # [H, W, 3]
-            else:
-                depth = obs["head_depth"][:, :, 0]
-                depth = np.nan_to_num(depth, nan=0.0, posinf=1.0, neginf=0.0)
-                grey  = (np.clip(depth, 0.0, 1.0) * 255).astype(np.uint8)
-                frame = np.stack([grey, grey, grey], axis=-1)
-            frames.append(frame)
+            # depth → uint8 greyscale frame.
+            # Habitat depth sensor returns normalised values in [0, 1]
+            # (1.0 == max_depth, typically 10 m).  NaN/inf appear for
+            # out-of-range pixels; replace them with 0 before scaling.
+            depth = obs["head_depth"][:, :, 0]                         # [H, W]
+            depth = np.nan_to_num(depth, nan=0.0, posinf=1.0, neginf=0.0)
+            frame = (np.clip(depth, 0.0, 1.0) * 255).astype(np.uint8)
+            frames.append(np.stack([frame, frame, frame], axis=-1))    # [H,W,3]
 
             mask = torch.tensor([[0.0 if done else 1.0]], device=self.device)
             if done:
@@ -642,12 +641,9 @@ class PALRDDPPOTrainer:
 
             try:
                 import wandb
-                _base = os.environ.get("WANDB_RUN_NAME", os.path.basename(self.outdir))
-                _seed_suffix = f"_seed{self.seed}" if self.seed is not None else ""
-                if _seed_suffix and _base.endswith(_seed_suffix):
-                    _run_name = _base
-                else:
-                    _run_name = f"{_base}{_seed_suffix}"
+                _run_name = os.environ.get("WANDB_RUN_NAME", os.path.basename(self.outdir))
+                if self.seed is not None:
+                    _run_name = f"{_run_name}_seed{self.seed}"
                 wandb.init(
                     project=os.environ.get("WANDB_PROJECT", "palr-habitat"),
                     entity=os.environ.get("WANDB_ENTITY") or None,

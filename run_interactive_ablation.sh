@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
-# =============================================================================
-#  run_on_HPC.sh
-#
-#  1. Build habitat_v3.sif from habitat_v3.def if the SIF does not yet exist.
-#  2. Run PALR DD-PPO Fetch training inside the container.
-#
-#  Submit to SLURM (single run):
-#    sbatch run_on_HPC.sh
-#  Or run interactively (after grabbing a GPU node):
-#    bash run_on_HPC.sh
-#
-#  Submit 3 parallel PALR jobs (seeds 0/1/2) — builds SIF first if needed:
-#    bash run_on_HPC.sh --sweep
-# =============================================================================
+#  # Ablation A: LR scaling only
+#   CONFIG=palr_habitat/configs/ddppo_palr_lr_only_fetch.yaml \                                                                               
+#   WANDB_RUN_NAME=palr-lr-only \                                                                                                             
+#   OUTDIR=results/palr_lr_only_seed0 \                                                                                                       
+#   bash run_local.sh                                                                                                                         
+                                                            
+#   # Ablation B: Perturbation only                                                                                                           
+#   CONFIG=palr_habitat/configs/ddppo_palr_perturb_only_fetch.yaml \
+#   WANDB_RUN_NAME=palr-perturb-only \                                                                                                        
+#   OUTDIR=results/palr_perturb_only_seed0 \
+#   bash run_local.sh                                                                                                                         
+                                                            
+#   Summary of the 4-way comparison in your paper:                                                                                            
+                                                            
+#   ┌───────────────────────────┬────────────┬──────────────┐                                                                                 
+#   │         Condition         │ LR scaling │ Perturbation │ 
+#   ├───────────────────────────┼────────────┼──────────────┤
+#   │ Baseline                  │ ✗          │ ✗            │
+#   ├───────────────────────────┼────────────┼──────────────┤
+#   │ Ablation A (LR only)      │ ✓          │ ✗            │                                                                                 
+#   ├───────────────────────────┼────────────┼──────────────┤
+#   │ Ablation B (Perturb only) │ ✗          │ ✓            │                                                                                 
+#   ├───────────────────────────┼────────────┼──────────────┤                                                                                 
+#   │ PALR (ours)               │ ✓          │ ✓            │
+#   └───────────────────────────┴────────────┴──────────────┘ 
 
-# ── SLURM directives ──────────────────────────────────────────────────────────
-#SBATCH --job-name=palr_habitat_v3
-#SBATCH --output=logs/palr_%j.out
-#SBATCH --error=logs/palr_%j.err
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --gpus=1
-#SBATCH --mem=32G
-#SBATCH --time=24:00:00
-#SBATCH --partition=gpuv
-
-set -euo pipefail
+# set -euo pipefail
 
 # ── Configurable paths ────────────────────────────────────────────────────────
 # All paths are relative to PROJ_DIR; override by setting env vars before
@@ -36,15 +35,21 @@ set -euo pipefail
 # (/var/spool/slurm/jobXXX/), not the real project dir.  Use SLURM_SUBMIT_DIR
 # (set by sbatch to wherever you ran it) and fall back to dirname only for
 # interactive use.
-PROJ_DIR="${PROJ_DIR:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}}"
-SIF="${SIF:-${PROJ_DIR}/habitat_v3.sif}"       # where the built image lives
+_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "${SLURM_SUBMIT_DIR:-}" && "${SLURM_SUBMIT_DIR}" != /var/www/* ]]; then
+    PROJ_DIR="${PROJ_DIR:-${SLURM_SUBMIT_DIR}}"
+else
+    PROJ_DIR="${PROJ_DIR:-${_script_dir}}"
+fi
+# SIF="${SIF:-${PROJ_DIR}/habitat_v3.sif}"       # where the built image lives
 DEF="${DEF:-${PROJ_DIR}/habitat_v3.def}"       # Singularity definition file
 
 # Training knobs
 SEED="${SEED:-0}"
 NUM_GPUS="${NUM_GPUS:-1}"
 NUM_ENVS="${NUM_ENVS:-4}"
-CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_fetch.yaml}"
+# CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_fetch.yaml}"
+CONFIG="${CONFIG:-palr_habitat/configs/ddppo_palr_perturb_only_fetch.yaml}"
 # NOTE: change to ddppo_baseline_fetch.yaml for the baseline run:
 # CONFIG="${CONFIG:-palr_habitat/configs/ddppo_baseline_fetch.yaml}"
 
@@ -57,7 +62,8 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 # Weights & Biases
 WANDB_PROJECT="${WANDB_PROJECT:-palr-habitat}"
 WANDB_ENTITY="${WANDB_ENTITY:-palr-habitat}"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-palr-ours}" # change to "palr-baseline" for the baseline run
+# WANDB_RUN_NAME="${WANDB_RUN_NAME:-palr-ours}" # change to "palr-baseline" for the baseline run
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-perturb-only}" # change to "palr-baseline" for the baseline run
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 log() { echo "[run_on_HPC] $(date '+%Y-%m-%d %H:%M:%S')  $*"; }
@@ -88,16 +94,16 @@ log "Using container runtime: ${SG} ($(${SG} --version))"
 if [[ "${1:-}" == "--sweep" ]]; then
     mkdir -p "${PROJ_DIR}/logs"
 
-    if [[ ! -f "${SIF}" ]]; then
-        log "SIF not found — building before sweep …"
-        if [[ ! -f "${DEF}" ]]; then
-            log "ERROR: definition file not found: ${DEF}"; exit 1
-        fi
-        ${SG} build --fakeroot "${SIF}" "${DEF}"
-        log "Build complete: ${SIF}"
-    else
-        log "SIF already exists — skipping build: ${SIF}"
-    fi
+    # if [[ ! -f "${SIF}" ]]; then
+    #     log "SIF not found — building before sweep …"
+    #     if [[ ! -f "${DEF}" ]]; then
+    #         log "ERROR: definition file not found: ${DEF}"; exit 1
+    #     fi
+    #     ${SG} build --fakeroot "${SIF}" "${DEF}"
+    #     log "Build complete: ${SIF}"
+    # else
+    #     log "SIF already exists — skipping build: ${SIF}"
+    # fi
 
     for seed in 0 1 2; do
         sbatch \
@@ -141,24 +147,37 @@ log "Launching training (seed=${SEED}, gpus=${NUM_GPUS}, envs=${NUM_ENVS}) …"
 
 cd $SLURM_SUBMIT_DIR
 
-container_path=/work/hezhang/hrii/singularity_Mujoco_Reflexive/containerReflexRL.sif
+container_path=/work/hezhang/hrii/singularity_rlBigWorld/torch2_3.sif
 
 # Note: the following source ~/miniforge3/etc/profile.d/conda.sh only works for Heng.
-singularity exec --nv $container_path bash -c "
+singularity exec --disable-cache --nv $container_path bash -c "
   source ~/miniforge3/etc/profile.d/conda.sh && \
   conda activate palr_habitat_v3 && \
+
+
+
+
+
   cd $PROJ_DIR && \
+  export __EGL_VENDOR_LIBRARY_FILENAMES=/work/hezhang/rlBigWorld/nvidia_egl_vendor.json && \
+  export LD_LIBRARY_PATH=/.singularity.d/libs:{LD_LIBRARY_PATH} export CUDA_VISIBLE_DEVICES="{CUDA_VISIBLE_DEVICES:-0}" && \
+  export PYOPENGL_PLATFORM=egl && \
+  export EGL_PLATFORM=surfaceless && \
+  unset DISPLAY && \
+  export WANDB_MODE=online && \
   export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} && \
   export HABITAT_SIM_LOG=quiet && \
   export MAGNUM_LOG=quiet && \
-  export PYOPENGL_PLATFORM=egl && \
   export TF_FORCE_GPU_ALLOW_GROWTH=true && \
-  export OMP_NUM_THREADS=4 && \
+  export OMP_NUM_THREADS=14 && \
   export WANDB_PROJECT=${WANDB_PROJECT} && \
   export WANDB_ENTITY=${WANDB_ENTITY} && \
   export WANDB_RUN_NAME=${WANDB_RUN_NAME} && \
   torchrun \
+    --standalone \
+    --nnodes=1 \
     --nproc_per_node=${NUM_GPUS} \
+    --max_restarts=0 \
     --rdzv_backend=c10d \
     --rdzv_endpoint=localhost:0 \
     palr_habitat/src/palr_trainer.py \
@@ -171,6 +190,8 @@ singularity exec --nv $container_path bash -c "
 
 
 log "Training finished."
+
+
 
 # ${SG} exec \
 #     --nv \
@@ -201,4 +222,14 @@ log "Training finished."
 # log "Training finished."
 
 
+# torchrun --standalone --nnodes=1 --nproc_per_node=1 --max_restarts=0 palr_habitat/src/palr_trainer.py --config palr_habitat/configs/ddppo_baseline_fetch.yaml --seed 0 --num_envs 4 --outdir results/debug_71_4_seed0
+
+# export  __EGL_VENDOR_LIBRARY_FILENAMES=/work/hezhang/rlBigWorld/nvidia_egl_vendor.json
+# export PYOPENGL_PLATFORM=egl
+# export EGL_PLATFORM=surfaceless
+# unset DISPLAY
+# export HABITAT_SIM_LOG=quiet
+# export MAGNUM_LOG=quiet
+# export TF_FORCE_GPU_ALLOW_GROWTH=true
+# export OMP_NUM_THREADS=14
 
