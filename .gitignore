@@ -86,6 +86,7 @@ tmp*
 /logs
 /data
 /results
+results/
 /outputs
 /private
 palr_plasticity_aware_lr/plots
