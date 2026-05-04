@@ -78,9 +78,14 @@ temp/
 
 /.claude
 /.venv
+tmp*
+/tmp*
+/pymp*
 /paper
 /rl_big_worlds_research_ideas.txt
-/log
+/logs
+/data
+/results
 /outputs
 /private
 palr_plasticity_aware_lr/plots
