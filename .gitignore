@@ -53,6 +53,7 @@ chroma_db/
 .env.*
 *.key
 *.secret
+*.sif
 
 # IDE / Editor
 .vscode/
