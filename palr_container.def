@@ -1,0 +1,300 @@
+# =============================================================================
+#  palr_container.def
+#
+#  Unified Singularity definition for the rlBigWorld project. Supports BOTH
+#  sub-projects in a SINGLE image via two conda environments:
+#
+#    conda env: palr_habitat      (Python 3.9)
+#      palr_habitat/              — DD-PPO Fetch Rearrangement
+#                                   habitat-sim 0.3.2 (EGL headless + Bullet)
+#                                   habitat-lab/baselines, PyTorch 2.3.1+cu121
+#
+#    conda env: palr_plasticity   (Python 3.10)  ← DEFAULT at runtime
+#      palr_plasticity_aware_lr/  — Continual-RL benchmarks:
+#                                   • Continual CartPole  (gym + DQN)
+#                                   • JellyBeanWorld      (jbw)
+#                                   • Continual-World/MT10 (metaworld + mujoco)
+#                                   PyTorch 2.3.1+cu121, mujoco 3.7.0,
+#                                   metaworld 3.0.0, tensorflow-cpu
+#
+#  Why two envs?
+#  -------------
+#  habitat-sim 0.3.2 is Python-3.9-only in the aihabitat conda channel.
+#  mujoco>=3.0.0 (required by metaworld 3.0.0) ships Python-3.10+ wheels only.
+#  These constraints are mutually exclusive, so each sub-project gets its own env.
+#
+#  Build
+#  -----
+#  No sudo / no GPU required on the build host.
+#
+#    apptainer build palr_container.sif palr_container.def
+#    # or with fakeroot:
+#    singularity build --fakeroot palr_container.sif palr_container.def
+#
+#  Switching environments at runtime
+#  -----------------------------------
+#    # Default (palr_plasticity / Python 3.10):
+#    singularity exec --nv --bind /home/hzhang/work/rlBigWorld:/workspace \
+#        palr_container.sif python run_cw_experiments.py
+#
+#    # Habitat env (palr_habitat / Python 3.9):
+#    singularity exec --nv --bind /home/hzhang/work/rlBigWorld:/workspace \
+#        palr_container.sif \
+#        /opt/miniforge3/envs/palr_habitat/bin/python palr_trainer.py ...
+# =============================================================================
+
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+# ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+%labels
+    Maintainer        PALR Team
+    Version           2.0.0
+    Description       Unified rlBigWorld container — two conda envs
+    CUDA_version      12.1.1
+    env_habitat       palr_habitat   (Python 3.9,  habitat-sim 0.3.2)
+    env_plasticity    palr_plasticity (Python 3.10, mujoco 3.7.0, metaworld 3.0.0)
+    PyTorch_version   2.3.1+cu121    (both envs)
+
+# ---------------------------------------------------------------------------
+# Runtime environment — defaults to palr_plasticity (Python 3.10)
+# ---------------------------------------------------------------------------
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_DIR=/opt/miniforge3
+
+    # Default env: palr_plasticity (CW / JBW / CartPole experiments)
+    export PATH=/opt/miniforge3/envs/palr_plasticity/bin:/opt/miniforge3/bin:$PATH
+
+    # CUDA
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+    # EGL headless rendering (habitat-sim + MuJoCo)
+    export PYOPENGL_PLATFORM=egl
+    export EGL_PLATFORM=surfaceless
+    export MUJOCO_GL=egl
+
+    # Habitat — silence Magnum/EGL spam
+    export HABITAT_SIM_LOG=quiet
+    export MAGNUM_LOG=quiet
+
+    # Prevent TF from hoarding VRAM
+    export TF_FORCE_GPU_ALLOW_GROWTH=true
+
+    # torchrun / distributed
+    export OMP_NUM_THREADS=4
+
+# ---------------------------------------------------------------------------
+# Build steps
+# ---------------------------------------------------------------------------
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_DIR=/opt/miniforge3
+
+    # ── 1. System packages ────────────────────────────────────────────────────
+    apt-get update -qq
+    apt-get install -y --no-install-recommends \
+        wget curl git bzip2 unzip ca-certificates \
+        build-essential cmake pkg-config patchelf \
+        libgl1-mesa-glx libegl1-mesa libgles2-mesa \
+        libglfw3 libosmesa6 libglew-dev \
+        libglib2.0-0 libsm6 libxext6 libxrender1 \
+        libx11-6 libxcb1 libxrandr2 libxinerama1 libxcursor1 libxi6 \
+        libgomp1 ffmpeg
+    rm -rf /var/lib/apt/lists/*
+
+    # ── 2. Miniforge ──────────────────────────────────────────────────────────
+    wget -q \
+        https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+        -O /tmp/miniforge.sh
+    bash /tmp/miniforge.sh -b -p ${CONDA_DIR}
+    rm /tmp/miniforge.sh
+    . ${CONDA_DIR}/etc/profile.d/conda.sh
+    conda update -n base -c conda-forge conda -y --quiet
+
+    # =========================================================================
+    # ENV 1: palr_habitat  (Python 3.9)
+    # =========================================================================
+
+    # ── 3. Create env + habitat-sim (must use aihabitat conda channel) ────────
+    conda create -n palr_habitat python=3.9 pip -y --quiet
+    conda install -n palr_habitat \
+        -c aihabitat -c conda-forge \
+        habitat-sim=0.3.2 withbullet headless \
+        -y
+
+    H_PIP=${CONDA_DIR}/envs/palr_habitat/bin/pip
+    H_PY=${CONDA_DIR}/envs/palr_habitat/bin/python
+
+    # ── 4. PyTorch for habitat DD-PPO ─────────────────────────────────────────
+    ${H_PIP} install --quiet \
+        torch==2.3.1+cu121 torchvision==0.18.1+cu121 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+    # ── 5. habitat-lab/baselines + pinned transitive deps ────────────────────
+    # habitat-baselines requires protobuf==3.20.1 and tensorboard==2.8.0;
+    # install them together so pip resolves the correct versions up front.
+    ${H_PIP} install --quiet \
+        habitat-lab==0.3.220241205 \
+        habitat-baselines==0.3.220241205 \
+        "protobuf==3.20.1" \
+        "tensorboard==2.8.0"
+
+    # ── 6. Common deps for habitat env ────────────────────────────────────────
+    ${H_PIP} install --quiet \
+        "numpy<2" scipy matplotlib pandas \
+        "wandb==0.15.12" imageio imageio-ffmpeg tqdm pyyaml \
+        "gym==0.22.0" scikit-learn
+
+    # =========================================================================
+    # ENV 2: palr_plasticity  (Python 3.10)
+    # =========================================================================
+
+    # ── 7. Create env ─────────────────────────────────────────────────────────
+    conda create -n palr_plasticity python=3.10 pip -y --quiet
+
+    P_PIP=${CONDA_DIR}/envs/palr_plasticity/bin/pip
+    P_PY=${CONDA_DIR}/envs/palr_plasticity/bin/python
+
+    # ── 8. PyTorch ────────────────────────────────────────────────────────────
+    ${P_PIP} install --quiet \
+        torch==2.3.1+cu121 torchvision==0.18.1+cu121 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+    # ── 9. Core CW/JBW/CartPole deps ─────────────────────────────────────────
+    # setuptools<81 keeps pkg_resources, which wandb 0.15.12 requires.
+    ${P_PIP} install --quiet \
+        "setuptools<81" \
+        "numpy<2" scipy matplotlib pandas \
+        tensorboard "wandb==0.15.12" imageio imageio-ffmpeg tqdm pyyaml \
+        "gym==0.26.2" gymnasium scikit-learn
+
+    # ── 10. mujoco + metaworld (Continual-World CW10/CW20/MT10) ──────────────
+    ${P_PIP} install --quiet "mujoco==3.7.0"
+    ${P_PIP} install --quiet "metaworld==3.0.0"
+
+    # ── 11. tensorflow-cpu + JellyBeanWorld ───────────────────────────────────
+    # CPU-only TF avoids cuDNN clashes with PyTorch cu121 wheels.
+    # JBW installs from GitHub (not on PyPI).
+    ${P_PIP} install --quiet "tensorflow-cpu==2.15.0"
+    ${P_PIP} install --quiet \
+        "git+https://github.com/eaplatanios/jelly-bean-world.git#subdirectory=api/python"
+
+    # ── 12. Cleanup ───────────────────────────────────────────────────────────
+    conda clean -afy
+    ${H_PIP} cache purge
+    ${P_PIP} cache purge
+
+    # ── 13. Smoke tests ───────────────────────────────────────────────────────
+    echo "=== Smoke test: palr_habitat (Python 3.9) ==="
+    ${H_PY} - <<'PYEOF'
+import importlib, sys
+mods = [
+    "habitat", "habitat_sim", "habitat_baselines",
+    "torch", "torchvision",
+    "numpy", "scipy", "sklearn", "matplotlib", "pandas",
+    "wandb", "imageio", "tqdm", "yaml", "gym",
+]
+ok = True
+for m in mods:
+    try:
+        mod = importlib.import_module(m)
+        v = getattr(mod, "__version__", "n/a")
+        print(f"  [habitat] {m:<22s} {v}")
+    except Exception as e:
+        print(f"  [habitat] {m:<22s} FAILED: {e}", file=sys.stderr)
+        ok = False
+if not ok:
+    sys.exit(1)
+print("palr_habitat smoke test PASSED")
+PYEOF
+
+    echo "=== Smoke test: palr_plasticity (Python 3.10) ==="
+    ${P_PY} - <<'PYEOF'
+import importlib, sys
+mods = [
+    "torch", "torchvision",
+    "numpy", "scipy", "sklearn", "matplotlib", "pandas",
+    "wandb", "imageio", "tqdm", "yaml",
+    "gym", "gymnasium",
+    "mujoco", "metaworld",
+    "jbw",
+    "tensorflow",
+]
+ok = True
+for m in mods:
+    try:
+        mod = importlib.import_module(m)
+        v = getattr(mod, "__version__", "n/a")
+        print(f"  [plasticity] {m:<22s} {v}")
+    except Exception as e:
+        print(f"  [plasticity] {m:<22s} FAILED: {e}", file=sys.stderr)
+        ok = False
+if not ok:
+    sys.exit(1)
+print("palr_plasticity smoke test PASSED")
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Default runscript: palr_plasticity Python
+# ---------------------------------------------------------------------------
+%runscript
+    exec /opt/miniforge3/envs/palr_plasticity/bin/python "$@"
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+%help
+    Unified rlBigWorld Singularity container — two conda envs.
+
+    Environments
+    ────────────
+      palr_plasticity  (Python 3.10)  ← DEFAULT
+        PyTorch          2.3.1+cu121
+        mujoco           3.7.0
+        metaworld        3.0.0   (Continual-World CW10/CW20/MT10)
+        gymnasium        latest
+        gym              0.26.2
+        jelly-bean-world 1.0
+        tensorflow-cpu   2.15.0
+        wandb            0.15.12
+
+      palr_habitat     (Python 3.9)
+        habitat-sim      0.3.2   (EGL headless, Bullet)
+        habitat-lab      0.3.220241205
+        habitat-baselines 0.3.220241205
+        PyTorch          2.3.1+cu121
+        gym              0.22.0
+        wandb            0.15.12
+
+    Plasticity experiments (default env)
+    ─────────────────────────────────────
+      singularity exec --nv \
+          --bind /home/hzhang/work/rlBigWorld:/workspace \
+          palr_container.sif \
+          bash -c "cd /workspace/palr_plasticity_aware_lr/src && \
+              python run_cw_experiments.py"
+
+    Habitat DD-PPO (palr_habitat env)
+    ──────────────────────────────────
+      singularity exec --nv \
+          --bind /home/hzhang/work/rlBigWorld:/workspace \
+          palr_container.sif \
+          bash -c "cd /workspace && \
+              CONDA_ENV=palr_habitat \
+              /opt/miniforge3/envs/palr_habitat/bin/torchrun \
+                  --nproc_per_node=1 \
+                  palr_habitat/src/palr_trainer.py \
+                  --config palr_habitat/configs/ddppo_palr_fetch.yaml \
+                  --seed 0 --outdir results/palr_seed0"
+
+    Notes
+    ─────
+      * Always pass --nv so Singularity injects the host NVIDIA driver / EGL ICD.
+      * Default env is palr_plasticity; use full path for palr_habitat binaries.
+      * MUJOCO_GL=egl and PYOPENGL_PLATFORM=egl force EGL headless rendering.
+      * tensorflow is CPU-only to avoid cuDNN clashes with PyTorch.
