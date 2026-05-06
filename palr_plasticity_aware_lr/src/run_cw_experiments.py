@@ -34,7 +34,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 os.environ.setdefault("MUJOCO_GL", "egl")
 
-from cw_env import ContinualWorld, CW10_TASKS
+from cw_env import ContinualWorld, CW10_TASKS, CW20_TASKS
 from sac_base import SACAgent
 from cw_baselines import SACShinkAndPerturbAgent, SACPeriodicResetAgent, SACL2RegAgent
 from palr_sac_agent import PALRSACAgent
@@ -209,7 +209,8 @@ def save_checkpoint(all_results, ckpt_suffix=""):
 
 def run_all(episodes_per_task: int, n_seeds: int, seed_offset_start: int = 0,
             ckpt_suffix: str = "", batch_size: int = 512,
-            reward_threshold: float = None, agent_idx: int = None):
+            reward_threshold: float = None, agent_idx: int = None,
+            task_list: list = None):
     """
     Run all (or a single) agent across seeds.
 
@@ -217,6 +218,9 @@ def run_all(episodes_per_task: int, n_seeds: int, seed_offset_start: int = 0,
     cw_checkpoint{ckpt_suffix}.json keyed by agent name.
     This allows launching each agent as a separate parallel process.
     """
+    if task_list is None:
+        task_list = CW10_TASKS
+
     all_results = {}
 
     # Resume from existing checkpoint (safe: each agent writes its own key)
@@ -233,12 +237,12 @@ def run_all(episodes_per_task: int, n_seeds: int, seed_offset_start: int = 0,
         print(f"{'='*70}")
 
         # Probe env for dims
-        probe = ContinualWorld(episodes_per_task=1, max_steps=1, seed=seed)
+        probe = ContinualWorld(task_names=task_list, episodes_per_task=1, max_steps=1, seed=seed)
         obs_dim, action_dim = probe.obs_dim, probe.action_dim
         probe.close()
-        print(f"CW10: obs_dim={obs_dim}  action_dim={action_dim}")
+        print(f"{len(task_list)}-task env: obs_dim={obs_dim}  action_dim={action_dim}")
 
-        n_episodes = episodes_per_task * len(CW10_TASKS)
+        n_episodes = episodes_per_task * len(task_list)
         agents = make_agents(obs_dim, action_dim, seed, batch_size)
 
         # Select only the requested agent (or all if agent_idx is None)
@@ -253,7 +257,7 @@ def run_all(episodes_per_task: int, n_seeds: int, seed_offset_start: int = 0,
                 continue
 
             print(f"\n--- {agent.name} ---")
-            env = ContinualWorld(episodes_per_task=episodes_per_task, seed=seed)
+            env = ContinualWorld(task_names=task_list, episodes_per_task=episodes_per_task, seed=seed)
             result = train_agent_cw(
                 agent, env, n_episodes,
                 verbose=True,
@@ -362,6 +366,8 @@ if __name__ == "__main__":
                         help="Quick debug: 20 ep/task, 1 seed, batch 64")
     parser.add_argument("--agent_idx",  type=int, default=None,
                         help="Run only this agent index (0-6). Omit to run all.")
+    parser.add_argument("--cw20", action="store_true",
+                        help="Run CW20 (20 tasks) instead of CW10")
     args = parser.parse_args()
 
     if args.fast:
@@ -373,8 +379,10 @@ if __name__ == "__main__":
         n_seeds      = args.seeds
         batch_size   = args.batch_size
 
-    n_total = ep_per_task * len(CW10_TASKS)
-    print(f"CW10 Experiment")
+    task_list = CW20_TASKS if args.cw20 else CW10_TASKS
+    benchmark = "CW20" if args.cw20 else "CW10"
+    n_total   = ep_per_task * len(task_list)
+    print(f"{benchmark} Experiment")
     print(f"  episodes_per_task={ep_per_task}  total={n_total}  "
           f"seeds={n_seeds}  batch={batch_size}"
           + (f"  agent_idx={args.agent_idx}" if args.agent_idx is not None else ""))
@@ -387,7 +395,10 @@ if __name__ == "__main__":
         batch_size=batch_size,
         reward_threshold=args.reward_threshold,
         agent_idx=args.agent_idx,
+        task_list=task_list,
     )
-    summary = save_results(all_results, ep_per_task)
-    print_table(summary)
+    # Only write final summary when running the full experiment (no suffix/agent slice)
+    if not args.ckpt_suffix and args.agent_idx is None:
+        summary = save_results(all_results, ep_per_task)
+        print_table(summary)
     print("\nDone. Run plot_cw_results.py to generate figures.")
