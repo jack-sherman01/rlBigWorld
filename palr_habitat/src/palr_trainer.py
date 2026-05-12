@@ -557,9 +557,8 @@ class PALRDDPPOTrainer:
                 # Recompute dead mask for this block
                 from plasticity_metrics_cnn import BlockActivationCollector
                 collector = BlockActivationCollector(encoder)
-                x = torch.cat([rgb_b, depth_b], dim=1)
                 encoder.eval()
-                encoder(x)
+                encoder(depth_b)
                 encoder.train()
                 acts = collector.get()
                 collector.remove_hooks()
