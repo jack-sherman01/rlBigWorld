@@ -464,3 +464,8 @@ bash run_on_HPC.sh
 | gym | 0.26.2 | 0.22.0 |
 | wandb | 0.15.12 | 0.15.12 |
 | numpy | <2 | <2 |
+
+## troubleshooting
+- If you encounter `ImportError: libcudart.so.12: cannot open shared object file`, ensure that the NVIDIA driver on the host is compatible with CUDA 12.1 (driver version ≥ 535.54.03). Update your driver if necessary.
+- For EGL errors, ensure that the container has access to the host's GPU and that the correct environment variables (`MUJOCO_GL=egl`, `PYOPENGL_PLATFORM=egl`, `EGL_PLATFORM=surfaceless`) are set.
+- If you see `[Error]:[Metadata] SceneDatasetAttributesManager.cpp(305)::validateMap : navmesh_instances Key : v3_sc4_staging_17  Value : navmeshes/v3_sc4_staging_17.navmesh  not found on disk as absolute path or relative to  data/replica_cad`, This error is benign and does not affect your training, as Habitat validates the entire dataset config at startup, even for scenes you're not using. Your config (rearrange_base.yaml) runs on v3_sc1_staging_00, so v3_sc4_staging_17 is never actually loaded. The rearrangement/fetch task doesn't rely on navmesh at runtime. Navmeshes matter for PointNav/ObjectNav (geodesic distance, SPL metrics). For robot arm rearrangement, Habitat uses physics-based collision and kinematic control — navmesh is only needed if you compute shortest-path metrics, which your trainer doesn't do.
