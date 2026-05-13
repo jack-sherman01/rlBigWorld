@@ -577,12 +577,42 @@ class PALRDDPPOTrainer:
 
     @torch.no_grad()
     def _record_episode(self, policy: nn.Module, phase, tag: str) -> None:
-        """Run one greedy episode in a fresh env and save a depth video."""
+        """Run one greedy episode in a fresh env and save an RGB video."""
         import imageio
+        import habitat
+        from habitat.config.read_write import read_write
+        from habitat.gym import make_gym_from_config
 
         video_path = f"{self.outdir}/videos/{tag}.mp4"
-        env = _make_single_env(phase.task_type, phase.dataset_path,
-                               self.seed, self.rank, env_idx=999)
+
+        config_path = _resolve_task_config(phase.task_type)
+        cfg = habitat.get_config(config_path)
+        with read_write(cfg):
+            cfg.habitat.environment.max_episode_steps = 200
+            cfg.habitat.dataset.data_path = phase.dataset_path
+            cfg.habitat.dataset.split = "train"
+            cfg.habitat.dataset.scenes_dir = "palr_habitat/data/"
+            cfg.habitat.simulator.scene_dataset = (
+                "palr_habitat/data/replica_cad/replicaCAD.scene_dataset_config.json"
+            )
+            cfg.habitat.simulator.habitat_sim_v0.gpu_device_id = self.rank
+            cfg.habitat.simulator.seed = self.seed + 999
+            sensor_res = int(os.environ.get("PALR_SENSOR_RES", "128"))
+            agents_cfg = cfg.habitat.simulator.agents
+            for agent_name in agents_cfg:
+                sim_sensors = agents_cfg[agent_name].sim_sensors
+                for sensor_name in sim_sensors:
+                    sensor = sim_sensors[sensor_name]
+                    if hasattr(sensor, "height"):
+                        sensor.height = sensor_res
+                    if hasattr(sensor, "width"):
+                        sensor.width = sensor_res
+            # Add head_rgb to gym obs so we can render colour frames
+            obs_keys = list(cfg.habitat.gym.obs_keys)
+            if "head_rgb" not in obs_keys:
+                obs_keys.append("head_rgb")
+            cfg.habitat.gym.obs_keys = obs_keys
+        env = _DebugEnvWrapper(make_gym_from_config(cfg), label="video-env")
         obs  = env.reset()
         if isinstance(obs, tuple):   # new-style gym reset → (obs, info)
             obs = obs[0]
@@ -606,14 +636,14 @@ class PALRDDPPOTrainer:
             else:
                 obs, _, done, _ = step_out
 
-            # depth → uint8 greyscale frame.
-            # Habitat depth sensor returns normalised values in [0, 1]
-            # (1.0 == max_depth, typically 10 m).  NaN/inf appear for
-            # out-of-range pixels; replace them with 0 before scaling.
-            depth = obs["head_depth"][:, :, 0]                         # [H, W]
-            depth = np.nan_to_num(depth, nan=0.0, posinf=1.0, neginf=0.0)
-            frame = (np.clip(depth, 0.0, 1.0) * 255).astype(np.uint8)
-            frames.append(np.stack([frame, frame, frame], axis=-1))    # [H,W,3]
+            if "head_rgb" in obs:
+                frame = obs["head_rgb"].astype(np.uint8)               # [H,W,3]
+            else:
+                depth = obs["head_depth"][:, :, 0]
+                depth = np.nan_to_num(depth, nan=0.0, posinf=1.0, neginf=0.0)
+                grey = (np.clip(depth, 0.0, 1.0) * 255).astype(np.uint8)
+                frame = np.stack([grey, grey, grey], axis=-1)
+            frames.append(frame)
 
             mask = torch.tensor([[0.0 if done else 1.0]], device=self.device)
             if done:
