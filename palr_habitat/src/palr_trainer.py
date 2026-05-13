@@ -419,10 +419,13 @@ class PALRDDPPOTrainer:
         self.success_keys = self.cfg.get(
             "SUCCESS_MEASURE_KEYS",
             [
-                "rearrange_pick_success",
+                "pick_success",               # habitat-lab 0.3.x RearrangePickSuccess
+                "place_success",              # habitat-lab 0.3.x RearrangePlaceSuccess
+                "open_fridge_success",        # habitat-lab 0.3.x
+                "rearrange_pick_success",     # older naming fallback
                 "rearrange_place_success",
                 "rearrange_open_fridge_success",
-                "success",  # fallback
+                "success",
             ],
         )
 
