@@ -607,7 +607,14 @@ class PALRDDPPOTrainer:
                         sensor.height = sensor_res
                     if hasattr(sensor, "width"):
                         sensor.width = sensor_res
-            # Add head_rgb to gym obs so we can render colour frames
+            # Add RGB sensor + obs key so we can render colour frames
+            from habitat.config.default_structured_configs import HabitatSimRGBSensorConfig
+            for agent_name in agents_cfg:
+                sim_sensors = agents_cfg[agent_name].sim_sensors
+                if "head_rgb_sensor" not in sim_sensors:
+                    sim_sensors["head_rgb_sensor"] = HabitatSimRGBSensorConfig(
+                        height=sensor_res, width=sensor_res
+                    )
             obs_keys = list(cfg.habitat.gym.obs_keys)
             if "head_rgb" not in obs_keys:
                 obs_keys.append("head_rgb")
