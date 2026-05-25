@@ -28,8 +28,7 @@ module load intel/singularity/singularity-4.2.2
 
 N_GPUS=2
 
-# Fall back to current directory if SLURM_SUBMIT_DIR is not set (e.g. interactive)
-WORKDIR=${SLURM_SUBMIT_DIR:-$PWD}
+WORKDIR=/work/hezhang/rlBigWorld
 echo "[$(date)] WORKDIR=${WORKDIR}"
 
 run_one() {
