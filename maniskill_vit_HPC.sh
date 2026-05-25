@@ -26,7 +26,7 @@ container_path=/work/hezhang/rlBigWorld/maniskill_vit.sif
 
 module load intel/singularity/singularity-4.2.2
 
-N_GPUS=2
+N_GPUS=4
 
 WORKDIR=/work/hezhang/rlBigWorld
 echo "[$(date)] WORKDIR=${WORKDIR}"
