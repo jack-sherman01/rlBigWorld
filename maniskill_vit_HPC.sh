@@ -31,7 +31,7 @@ export SINGULARITYENV_SAPIEN_HEADLESS=1
 export SINGULARITYENV_TF_FORCE_GPU_ALLOW_GROWTH=true
 export SINGULARITYENV_VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
 
-container_path=/work/hezhang/hrii/rlBigWorld/maniskill_vit.sif
+container_path=/work/hezhang/rlBigWorld/maniskill_vit.sif
 
 module load intel/singularity/singularity-4.2.2
 
