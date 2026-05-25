@@ -21,7 +21,6 @@ export SINGULARITYENV_PYOPENGL_PLATFORM=egl
 export SINGULARITYENV_EGL_PLATFORM=surfaceless
 export SINGULARITYENV_SAPIEN_HEADLESS=1
 export SINGULARITYENV_TF_FORCE_GPU_ALLOW_GROWTH=true
-export SINGULARITYENV_VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
 
 container_path=/work/hezhang/rlBigWorld/maniskill_vit.sif
 
@@ -29,13 +28,16 @@ module load intel/singularity/singularity-4.2.2
 
 N_GPUS=2
 
+# Fall back to current directory if SLURM_SUBMIT_DIR is not set (e.g. interactive)
+WORKDIR=${SLURM_SUBMIT_DIR:-$PWD}
+echo "[$(date)] WORKDIR=${WORKDIR}"
+
 run_one() {
     local agent=$1 seed=$2 gpu=$3
     echo "[$(date)] START agent=${agent} seed=${seed} gpu=${gpu}"
     SINGULARITYENV_CUDA_VISIBLE_DEVICES=${gpu} \
     singularity exec --disable-cache --nv \
-        -B $SLURM_SUBMIT_DIR:/workspace \
-        -B /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
+        -B ${WORKDIR}:/workspace \
         ${container_path} \
         bash -c "
             cd /workspace
