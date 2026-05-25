@@ -1,24 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=maniskill_vit
 #SBATCH --partition=gpua
-#SBATCH --array=0-17%4                # 6 agents × 3 seeds = 18 runs, max 4 at a time
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
-#SBATCH --gpus-per-task=1
+#SBATCH --cpus-per-task=24            # 6 processes × 4 OMP threads each
+#SBATCH --gpus=6
 #SBATCH --time=24:00:00
-#SBATCH --mem=32G
-#SBATCH --output=logs/slurm_%A_%a.out  # %A=job id, %a=array index
+#SBATCH --mem=96G                     # 24 CPUs × 4GB default
+#SBATCH --output=logs/slurm_%j.out
 
 #SBATCH --mail-user=heng.zhang@iit.it
 #SBATCH --mail-type=END,FAIL
-
-# Map array index → (agent_idx, seed)
-# Layout: task 0-2 → agent 0 seeds 0-2, task 3-5 → agent 1 seeds 0-2, ...
-AGENT_IDX=$((SLURM_ARRAY_TASK_ID / 3))
-SEED=$((SLURM_ARRAY_TASK_ID % 3))
-
-echo "[$(date)] array_task=${SLURM_ARRAY_TASK_ID}  agent=${AGENT_IDX}  seed=${SEED}"
 
 export SINGULARITYENV_OMP_NUM_THREADS=4
 export SINGULARITYENV_MKL_NUM_THREADS=1
@@ -35,17 +27,49 @@ container_path=/work/hezhang/rlBigWorld/maniskill_vit.sif
 
 module load intel/singularity/singularity-4.2.2
 
-singularity exec --disable-cache --nv \
-    -B $SLURM_SUBMIT_DIR:/workspace \
-    -B /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
-    ${container_path} \
-    bash -c "
-        cd /workspace
-        unset DISPLAY
-        python maniskill_vit/src/run_experiments.py \
-            --seeds 1 \
-            --seed_offset ${SEED} \
-            --agent_idx ${AGENT_IDX} \
-            --episodes ${EPISODES:-400} \
-            --task_episodes ${TASK_EPS:-100}
-    "
+N_GPUS=6
+
+run_one() {
+    local agent=$1 seed=$2 gpu=$3
+    echo "[$(date)] START agent=${agent} seed=${seed} gpu=${gpu}"
+    SINGULARITYENV_CUDA_VISIBLE_DEVICES=${gpu} \
+    singularity exec --disable-cache --nv \
+        -B $SLURM_SUBMIT_DIR:/workspace \
+        -B /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
+        ${container_path} \
+        bash -c "
+            cd /workspace
+            unset DISPLAY
+            python maniskill_vit/src/run_experiments.py \
+                --seeds 1 \
+                --seed_offset ${seed} \
+                --agent_idx ${agent} \
+                --episodes ${EPISODES:-400} \
+                --task_episodes ${TASK_EPS:-100}
+        " > logs/agent${agent}_seed${seed}.log 2>&1
+    echo "[$(date)] DONE  agent=${agent} seed=${seed} gpu=${gpu}"
+}
+
+# Launch all 18 runs (6 agents × 3 seeds), 4 at a time cycling across GPUs
+slot=0
+pids=()
+
+for agent in 0 1 2 3 4 5; do
+    for seed in 0 1 2; do
+        gpu=$((slot % N_GPUS))
+        run_one $agent $seed $gpu &
+        pids+=($!)
+        slot=$((slot + 1))
+
+        # Wait for the current batch of N_GPUS to finish before launching more
+        if [ $((slot % N_GPUS)) -eq 0 ]; then
+            wait "${pids[@]}"
+            pids=()
+        fi
+    done
+done
+
+# Wait for any remaining jobs
+wait "${pids[@]}"
+
+echo "[$(date)] All runs complete."
