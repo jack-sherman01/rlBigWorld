@@ -3,10 +3,10 @@
 #SBATCH --partition=gpua
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=24            # 6 processes × 4 OMP threads each
-#SBATCH --gpus=6
+#SBATCH --cpus-per-task=12            # 3 processes × 4 OMP threads each
+#SBATCH --gpus=3
 #SBATCH --time=24:00:00
-#SBATCH --mem=96G                     # 24 CPUs × 4GB default
+#SBATCH --mem=64G
 #SBATCH --output=logs/slurm_%j.out
 
 #SBATCH --mail-user=heng.zhang@iit.it
@@ -27,7 +27,7 @@ container_path=/work/hezhang/rlBigWorld/maniskill_vit.sif
 
 module load intel/singularity/singularity-4.2.2
 
-N_GPUS=6
+N_GPUS=3
 
 run_one() {
     local agent=$1 seed=$2 gpu=$3
