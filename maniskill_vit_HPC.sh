@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=maniskill_vit
 #SBATCH --partition=gpua
-#SBATCH --array=0-17                  # 6 agents × 3 seeds = 18 independent runs
+#SBATCH --array=0-17%4                # 6 agents × 3 seeds = 18 runs, max 4 at a time
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-task=1
-#SBATCH --time=48:00:00
-#SBATCH --mem=48G
+#SBATCH --time=24:00:00
+#SBATCH --mem=32G
 #SBATCH --output=logs/slurm_%A_%a.out  # %A=job id, %a=array index
 
 #SBATCH --mail-user=heng.zhang@iit.it
@@ -20,7 +20,7 @@ SEED=$((SLURM_ARRAY_TASK_ID % 3))
 
 echo "[$(date)] array_task=${SLURM_ARRAY_TASK_ID}  agent=${AGENT_IDX}  seed=${SEED}"
 
-export SINGULARITYENV_OMP_NUM_THREADS=8
+export SINGULARITYENV_OMP_NUM_THREADS=4
 export SINGULARITYENV_MKL_NUM_THREADS=1
 export SINGULARITYENV_OPENBLAS_NUM_THREADS=1
 export SINGULARITYENV_PYTHONUNBUFFERED=1
