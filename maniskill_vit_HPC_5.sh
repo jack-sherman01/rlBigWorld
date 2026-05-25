@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=mv_agent1
+#SBATCH --job-name=mv_agent4
 #SBATCH --partition=gpua
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
@@ -7,7 +7,7 @@
 #SBATCH --gpus=3
 #SBATCH --time=24:00:00
 #SBATCH --mem=48G
-#SBATCH --output=logs/slurm_agent1_%j.out
+#SBATCH --output=logs/slurm_agent4_%j.out
 
 #SBATCH --mail-user=heng.zhang@iit.it
 #SBATCH --mail-type=END,FAIL
@@ -27,11 +27,11 @@ container_path=/work/hezhang/rlBigWorld/maniskill_vit.sif
 module load intel/singularity/singularity-4.2.2
 
 WORKDIR=/work/hezhang/rlBigWorld
-echo "[$(date)] WORKDIR=${WORKDIR}  agent=1 (SAC-L2Reg)"
+echo "[$(date)] WORKDIR=${WORKDIR}  agent=4 (PALR-NoPerturb)"
 
 run_one() {
     local seed=$1 gpu=$2
-    echo "[$(date)] START agent=1 seed=${seed} gpu=${gpu}"
+    echo "[$(date)] START agent=4 seed=${seed} gpu=${gpu}"
     SINGULARITYENV_CUDA_VISIBLE_DEVICES=${gpu} \
     singularity exec --disable-cache --nv \
         -B ${WORKDIR}:/workspace \
@@ -42,12 +42,12 @@ run_one() {
             python maniskill_vit/src/run_experiments.py \
                 --seeds 1 \
                 --seed_offset ${seed} \
-                --agent_idx 1 \
+                --agent_idx 4 \
                 --episodes ${EPISODES:-400} \
                 --task_episodes ${TASK_EPS:-100} \
-                --ckpt_suffix _full_seed${seed}_agent1
-        " > logs/agent1_seed${seed}.log 2>&1
-    echo "[$(date)] DONE  agent=1 seed=${seed} gpu=${gpu}"
+                --ckpt_suffix _full_seed${seed}_agent4
+        " > logs/agent4_seed${seed}.log 2>&1
+    echo "[$(date)] DONE  agent=4 seed=${seed} gpu=${gpu}"
 }
 
 run_one 0 0 &
@@ -55,4 +55,4 @@ run_one 1 1 &
 run_one 2 2 &
 wait
 
-echo "[$(date)] All seeds complete (agent 1)."
+echo "[$(date)] All seeds complete (agent 4 — PALR-NoPerturb)."
