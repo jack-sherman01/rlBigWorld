@@ -1,16 +1,26 @@
 #!/bin/bash
 #SBATCH --job-name=maniskill_vit
-#SBATCH --partition=gpuv
+#SBATCH --partition=gpua
+#SBATCH --array=0-17                  # 6 agents × 3 seeds = 18 independent runs
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
-#SBATCH --gpus=1
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus-per-task=1
 #SBATCH --time=48:00:00
-#SBATCH --mem=28G
+#SBATCH --mem=48G
+#SBATCH --output=logs/slurm_%A_%a.out  # %A=job id, %a=array index
 
 #SBATCH --mail-user=heng.zhang@iit.it
+#SBATCH --mail-type=END,FAIL
 
-export SINGULARITYENV_OMP_NUM_THREADS=4
+# Map array index → (agent_idx, seed)
+# Layout: task 0-2 → agent 0 seeds 0-2, task 3-5 → agent 1 seeds 0-2, ...
+AGENT_IDX=$((SLURM_ARRAY_TASK_ID / 3))
+SEED=$((SLURM_ARRAY_TASK_ID % 3))
+
+echo "[$(date)] array_task=${SLURM_ARRAY_TASK_ID}  agent=${AGENT_IDX}  seed=${SEED}"
+
+export SINGULARITYENV_OMP_NUM_THREADS=8
 export SINGULARITYENV_MKL_NUM_THREADS=1
 export SINGULARITYENV_OPENBLAS_NUM_THREADS=1
 export SINGULARITYENV_PYTHONUNBUFFERED=1
@@ -34,8 +44,8 @@ singularity exec --disable-cache --nv \
         unset DISPLAY
         python maniskill_vit/src/run_experiments.py \
             --seeds 1 \
-            --seed_offset ${SEED:-0} \
-            --agent_idx ${AGENT:-3} \
+            --seed_offset ${SEED} \
+            --agent_idx ${AGENT_IDX} \
             --episodes ${EPISODES:-400} \
             --task_episodes ${TASK_EPS:-100}
     "
