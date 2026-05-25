@@ -45,7 +45,8 @@ run_one() {
                 --seed_offset ${seed} \
                 --agent_idx ${agent} \
                 --episodes ${EPISODES:-400} \
-                --task_episodes ${TASK_EPS:-100}
+                --task_episodes ${TASK_EPS:-100} \
+                --ckpt_suffix _full_seed${seed}_agent${agent}
         " > logs/agent${agent}_seed${seed}.log 2>&1
     echo "[$(date)] DONE  agent=${agent} seed=${seed} gpu=${gpu}"
 }
