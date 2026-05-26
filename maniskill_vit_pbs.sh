@@ -13,9 +13,19 @@ container_path=/home/hzhang/work/rlBigWorld/maniskill_vit.sif
 
 cd $PBS_O_WORKDIR
 
+VULKAN_BIND=""
+VK_ICD_ENV=""
+for icd_dir in /usr/share/vulkan/icd.d /etc/vulkan/icd.d; do
+    if [[ -d "${icd_dir}" ]]; then
+        VULKAN_BIND="-B ${icd_dir}:${icd_dir}:ro"
+        VK_ICD_ENV="export VK_ICD_FILENAMES=${icd_dir}/nvidia_icd.json"
+        break
+    fi
+done
+
 singularity exec --disable-cache --nv \
     -B $PBS_O_WORKDIR:/workspace \
-    -B /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
+    ${VULKAN_BIND} \
     ${container_path} \
     bash -c "
         cd /workspace
@@ -23,7 +33,7 @@ singularity exec --disable-cache --nv \
         export PYOPENGL_PLATFORM=egl
         export EGL_PLATFORM=surfaceless
         export SAPIEN_HEADLESS=1
-        export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+        ${VK_ICD_ENV}
         export TF_FORCE_GPU_ALLOW_GROWTH=true
         export OMP_NUM_THREADS=4
         unset DISPLAY

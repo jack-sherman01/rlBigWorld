@@ -16,6 +16,7 @@ Non-stationarity: each task runs for `task_episodes` episodes, then
 switches to the next (cycling). No task-switch signal given to the agent.
 """
 
+import builtins
 import numpy as np
 import gymnasium as gym
 import mani_skill.envs  # noqa: F401 — registers all ManiSkill envs with gymnasium
@@ -56,13 +57,19 @@ def _make_single_env(task_id: str, seed: int, obs_size: int = OBS_IMG_SIZE) -> g
     This is sufficient for the plasticity experiment: the ViT architecture
     is identical to the RGB case, only the rendering pipeline differs.
     """
-    env = gym.make(
-        task_id,
-        obs_mode="state",
-        control_mode="pd_joint_delta_pos",
-        render_mode=None,
-    )
-    env.reset(seed=seed)
+    # Non-interactive runs have no stdin; auto-accept ManiSkill asset downloads.
+    _orig_input = builtins.input
+    builtins.input = lambda _prompt="": "y"
+    try:
+        env = gym.make(
+            task_id,
+            obs_mode="state",
+            control_mode="pd_joint_delta_pos",
+            render_mode=None,
+        )
+        env.reset(seed=seed)
+    finally:
+        builtins.input = _orig_input
     return env
 
 

@@ -45,9 +45,18 @@ log() { echo "[pbs] $(date '+%Y-%m-%d %H:%M:%S')  $*"; }
 # ---------------------------------------------------------------------------
 run_in_container() {
     local pyscript="$1"; shift
+    local VULKAN_BIND=""
+    local VK_ICD_ENV=""
+    for icd_dir in /usr/share/vulkan/icd.d /etc/vulkan/icd.d; do
+        if [[ -d "${icd_dir}" ]]; then
+            VULKAN_BIND="--bind ${icd_dir}:${icd_dir}:ro"
+            VK_ICD_ENV="export VK_ICD_FILENAMES=${icd_dir}/nvidia_icd.json"
+            break
+        fi
+    done
     apptainer exec --nv \
         --bind "${PROJ_DIR}:/workspace" \
-        --bind /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
+        ${VULKAN_BIND} \
         "${SIF}" \
         bash -c "
             set -e
@@ -57,7 +66,7 @@ run_in_container() {
             export PYOPENGL_PLATFORM=egl
             export EGL_PLATFORM=surfaceless
             export SAPIEN_HEADLESS=1
-            export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+            ${VK_ICD_ENV}
             export TF_FORCE_GPU_ALLOW_GROWTH=true
             export OMP_NUM_THREADS=4
             unset DISPLAY
