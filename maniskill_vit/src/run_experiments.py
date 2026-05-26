@@ -251,12 +251,15 @@ def run_one(
             if hasattr(agent, "palr_history") and agent.palr_history:
                 palr_history = agent.palr_history.copy()
 
-            elapsed = time.time() - t0
-            mean_r  = np.mean(episode_rewards[-log_freq:]) if episode_rewards else 0.0
-            dead_l5 = metrics.get("dead_L5", float("nan"))
+            elapsed   = time.time() - t0
+            mean_r    = np.mean(episode_rewards[-log_freq:]) if episode_rewards else 0.0
+            succ_rate = np.mean(episode_successes[-log_freq:]) if episode_successes else 0.0
+            dead_l5   = metrics.get("dead_L5", float("nan"))
             print(
                 f"  ep {ep:4d}/{n_episodes} | task={env.current_task_name:<20s} "
-                f"| r={mean_r:6.2f} | dead_L5={dead_l5:.3f} | {elapsed:.0f}s"
+                f"| mean_r={mean_r:6.2f} | succ={succ_rate:.2f} "
+                f"| dead_L5={dead_l5:.3f} | {elapsed:.0f}s",
+                flush=True,
             )
 
         # ── Checkpoint: after each task switch and at the final episode ──────

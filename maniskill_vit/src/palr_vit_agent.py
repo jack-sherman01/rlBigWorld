@@ -59,6 +59,7 @@ class PALRViTAgent(SACAgent):
         perturb_freq:   int   = 500,
         lr_floor:       float = 0.05,
         lr_ceil:        float = 5.0,
+        print_freq:     int   = 1000,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -70,6 +71,7 @@ class PALRViTAgent(SACAgent):
         self.perturb_freq   = perturb_freq
         self.lr_floor       = lr_floor
         self.lr_ceil        = lr_ceil
+        self.print_freq     = print_freq
         self._base_lr       = self._lr
 
         # Per-layer LR scale factors (one per ViT block)
@@ -92,7 +94,29 @@ class PALRViTAgent(SACAgent):
             self._apply_targeted_perturbation()
 
         losses["lr_scales"] = float(np.mean(self._lr_scales))
+
+        if self.total_steps % self.print_freq == 0 and self.total_steps > 0:
+            self._print_progress()
+
         return losses
+
+    # ------------------------------------------------------------------
+    def _print_progress(self):
+        step = self.total_steps
+        mean_scale = float(np.mean(self._lr_scales))
+        if self.palr_history:
+            last = self.palr_history[-1]
+            mean_dead  = float(np.mean(last["dead"]))
+            mean_erank = float(np.mean(last["erank"]))
+            print(
+                f"[PALR] step={step:>8d} | "
+                f"lr_scale={mean_scale:.3f} | "
+                f"dead={mean_dead:.3f} | "
+                f"erank={mean_erank:.1f}",
+                flush=True,
+            )
+        else:
+            print(f"[PALR] step={step:>8d} | lr_scale={mean_scale:.3f}", flush=True)
 
     # ------------------------------------------------------------------
     @torch.no_grad()
@@ -207,7 +231,7 @@ class PALRViTAgent(SACAgent):
         """
         encoder = self.actor.encoder
 
-        for i, blk in enumerate(encoder.blocks):
+        for blk in encoder.blocks:
             mlp  = blk.mlp
             if mlp._last_activations is None:
                 continue
