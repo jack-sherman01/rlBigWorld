@@ -186,6 +186,18 @@ class PALRViTAgent(SACAgent):
             self.actor_opt = torch.optim.Adam(layer_params, lr=base_lr)
 
     # ------------------------------------------------------------------
+    def _checkpoint_dict(self) -> dict:
+        d = super()._checkpoint_dict()
+        d["_lr_scales"]   = self._lr_scales
+        d["palr_history"] = self.palr_history
+        return d
+
+    def _load_checkpoint_dict(self, d: dict):
+        super()._load_checkpoint_dict(d)
+        self._lr_scales   = d.get("_lr_scales",   self._lr_scales)
+        self.palr_history = d.get("palr_history", [])
+
+    # ------------------------------------------------------------------
     @torch.no_grad()
     def _apply_targeted_perturbation(self):
         """

@@ -118,27 +118,53 @@ def run_one(
 ) -> dict:
     """
     Train one agent for `n_episodes` and return result dict.
-    Saves a checkpoint JSON after each task switch and at end.
+    Saves JSON + .pt checkpoint after each task switch and at end.
+    Safe to kill and restart — resumes from the last checkpoint.
     """
     agent_name = AGENT_NAMES[agent_idx]
-    ckpt_path  = os.path.join(RESULTS_DIR, f"vit_checkpoint{ckpt_suffix}.json")
+    ckpt_json  = os.path.join(RESULTS_DIR, f"vit_checkpoint{ckpt_suffix}.json")
+    ckpt_pt    = os.path.join(RESULTS_DIR, f"vit_checkpoint{ckpt_suffix}.pt")
 
-    # Resume from checkpoint if it exists
-    if os.path.exists(ckpt_path):
-        with open(ckpt_path) as f:
-            ckpt = json.load(f)
-        if agent_name in ckpt:
-            print(f"  [resume] {agent_name} has {len(ckpt[agent_name])} runs, skipping.")
-            return ckpt
+    # ── Load prior state if resuming ────────────────────────────────────────
+    start_ep          = 0
+    step_count        = 0
+    episode_rewards:   list = []
+    episode_successes: list = []
+    episode_task_ids:  list = []
+    task_switch_eps:   list = []
+    plasticity_log:    list = []
+    palr_history:      list = []
 
-    print(f"\n{'='*60}")
-    print(f"  Agent: {agent_name}  |  seed={seed}  |  episodes={n_episodes}")
-    print(f"{'='*60}")
+    if os.path.exists(ckpt_json) and os.path.exists(ckpt_pt):
+        with open(ckpt_json) as f:
+            saved = json.load(f)
+        if agent_name in saved:
+            run_data          = saved[agent_name][0]
+            episode_rewards   = run_data.get("episode_rewards",   [])
+            episode_successes = run_data.get("episode_successes", [])
+            episode_task_ids  = run_data.get("episode_task_ids",  [])
+            task_switch_eps   = run_data.get("task_switch_episodes", [])
+            plasticity_log    = run_data.get("plasticity_log",    [])
+            palr_history      = run_data.get("palr_history",      [])
+            step_count        = run_data.get("step_count",        0)
+            start_ep          = len(episode_rewards)
 
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+            if start_ep >= n_episodes:
+                print(f"  [resume] {agent_name} already complete ({start_ep} eps), skipping.")
+                return saved
 
-    # Environment (mock = no GPU needed; real = ManiSkill3 requires GPU)
+            print(f"\n{'='*60}")
+            print(f"  Agent: {agent_name}  |  seed={seed}  |  RESUMING from ep {start_ep}/{n_episodes}")
+            print(f"{'='*60}")
+    else:
+        print(f"\n{'='*60}")
+        print(f"  Agent: {agent_name}  |  seed={seed}  |  episodes={n_episodes}")
+        print(f"{'='*60}")
+
+    np.random.seed(seed + start_ep)   # advance rng past completed episodes
+    torch.manual_seed(seed + start_ep)
+
+    # ── Environment ─────────────────────────────────────────────────────────
     if use_mock:
         env = MockHeterogeneousSkillStream(
             task_sequence=MOCK_TASK_SEQUENCE,
@@ -159,35 +185,38 @@ def run_one(
     obs_shape  = env.obs_shape
     action_dim = env.action_dim
 
-    # Agent
+    # ── Agent ────────────────────────────────────────────────────────────────
     agent = make_agent(agent_idx, obs_shape, action_dim, device, lr,
                        buffer_capacity=buffer_capacity, batch_size=batch_size)
     print(f"  obs_shape={obs_shape}  action_dim={action_dim}  device={device}")
 
-    # Results storage
-    episode_rewards:     list = []
-    episode_successes:   list = []
-    episode_task_ids:    list = []
-    task_switch_eps:     list = []
-    plasticity_log:      list = []
-    palr_history:        list = []
+    # ── Restore checkpoints and advance env to the correct task ─────────────────
+    if start_ep > 0:
+        agent.load_weights(ckpt_pt)
+        # Jump env to the task that was active at start_ep
+        target_task = (start_ep // task_episodes) % env.n_tasks
+        if target_task != 0:
+            env.task_idx = target_task
+            env._load_task(target_task)
+        env.episode_count        = start_ep
+        env.task_switch_episodes = task_switch_eps.copy()
+        print(f"  [resume] weights loaded, env at task={env.current_task_name} (ep {start_ep})")
 
-    step_count = 0
     t0 = time.time()
 
-    for ep in range(n_episodes):
+    for ep in range(start_ep, n_episodes):
         obs  = env.reset()
         done = False
         ep_reward   = 0.0
         ep_success  = 0.0
         ep_steps    = 0
 
-        # Track task switches
+        # Track task switches detected by env during reset
         if len(env.task_switch_episodes) > len(task_switch_eps):
             task_switch_eps = env.task_switch_episodes.copy()
 
         while not done:
-            # Random exploration during warmup
+            # Random exploration only during initial warmup (skip on resume)
             if step_count < warmup_steps:
                 action = np.random.uniform(-1, 1, action_dim).astype(np.float32)
             else:
@@ -195,10 +224,8 @@ def run_one(
 
             next_obs, reward, done, info = env.step(action)
 
-            # Store transition
             agent.buffer.add(obs, action, reward, next_obs, float(done))
 
-            # Update
             for _ in range(updates_per_step):
                 agent.update()
 
@@ -221,7 +248,6 @@ def run_one(
             metrics["task"]    = env.current_task_name
             plasticity_log.append(metrics)
 
-            # PALR history
             if hasattr(agent, "palr_history") and agent.palr_history:
                 palr_history = agent.palr_history.copy()
 
@@ -233,36 +259,39 @@ def run_one(
                 f"| r={mean_r:6.2f} | dead_L5={dead_l5:.3f} | {elapsed:.0f}s"
             )
 
-        # Checkpoint after each task switch episode
+        # ── Checkpoint: after each task switch and at the final episode ──────
         if ep in task_switch_eps or ep == n_episodes - 1:
             result = {
                 agent_name: [{
-                    "seed":              seed,
-                    "episode_rewards":   episode_rewards,
-                    "episode_successes": episode_successes,
-                    "episode_task_ids":  episode_task_ids,
-                    "task_switch_episodes": task_switch_eps,
-                    "plasticity_log":    plasticity_log,
-                    "palr_history":      palr_history,
-                    "agent_idx":         agent_idx,
+                    "seed":                  seed,
+                    "episode_rewards":       episode_rewards,
+                    "episode_successes":     episode_successes,
+                    "episode_task_ids":      episode_task_ids,
+                    "task_switch_episodes":  task_switch_eps,
+                    "plasticity_log":        plasticity_log,
+                    "palr_history":          palr_history,
+                    "agent_idx":             agent_idx,
+                    "step_count":            step_count,
                 }]
             }
-            with open(ckpt_path, "w") as f:
+            with open(ckpt_json, "w") as f:
                 json.dump(to_serialisable(result), f, indent=2)
-            print(f"  [ckpt] saved → {os.path.basename(ckpt_path)}")
+            agent.save_weights(ckpt_pt)
+            print(f"  [ckpt] saved → {os.path.basename(ckpt_pt)}")
 
     env.close()
 
     result = {
         agent_name: [{
-            "seed":              seed,
-            "episode_rewards":   episode_rewards,
-            "episode_successes": episode_successes,
-            "episode_task_ids":  episode_task_ids,
-            "task_switch_episodes": task_switch_eps,
-            "plasticity_log":    plasticity_log,
-            "palr_history":      palr_history,
-            "agent_idx":         agent_idx,
+            "seed":                  seed,
+            "episode_rewards":       episode_rewards,
+            "episode_successes":     episode_successes,
+            "episode_task_ids":      episode_task_ids,
+            "task_switch_episodes":  task_switch_eps,
+            "plasticity_log":        plasticity_log,
+            "palr_history":          palr_history,
+            "agent_idx":             agent_idx,
+            "step_count":            step_count,
         }]
     }
     return result

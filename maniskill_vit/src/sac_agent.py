@@ -217,6 +217,41 @@ class SACAgent:
         """Return plasticity metrics from actor encoder (for logging)."""
         return self.actor.encoder.compute_plasticity_metrics()
 
+    # ------------------------------------------------------------------
+    def _checkpoint_dict(self) -> dict:
+        d = {
+            "actor":         self.actor.state_dict(),
+            "critic":        self.critic.state_dict(),
+            "critic_target": self.critic_target.state_dict(),
+            "actor_opt":     self.actor_opt.state_dict(),
+            "critic_opt":    self.critic_opt.state_dict(),
+            "total_steps":   self.total_steps,
+        }
+        if self.auto_alpha:
+            d["log_alpha"] = self.log_alpha.detach().cpu().clone()
+            d["alpha_opt"] = self.alpha_opt.state_dict()
+        return d
+
+    def _load_checkpoint_dict(self, d: dict):
+        self.actor.load_state_dict(d["actor"])
+        self.critic.load_state_dict(d["critic"])
+        self.critic_target.load_state_dict(d["critic_target"])
+        self.actor_opt.load_state_dict(d["actor_opt"])
+        self.critic_opt.load_state_dict(d["critic_opt"])
+        self.total_steps = d.get("total_steps", 0)
+        if self.auto_alpha and "log_alpha" in d:
+            with torch.no_grad():
+                self.log_alpha.copy_(d["log_alpha"].to(self.device))
+            self.alpha = self.log_alpha.exp().item()
+            self.alpha_opt.load_state_dict(d["alpha_opt"])
+
+    def save_weights(self, path: str):
+        torch.save(self._checkpoint_dict(), path)
+
+    def load_weights(self, path: str):
+        d = torch.load(path, map_location=self.device, weights_only=False)
+        self._load_checkpoint_dict(d)
+
 
 # ---------------------------------------------------------------------------
 # SAC-L2Reg
