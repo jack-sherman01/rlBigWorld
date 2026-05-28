@@ -217,9 +217,21 @@ class PALRViTAgent(SACAgent):
         return d
 
     def _load_checkpoint_dict(self, d: dict):
-        super()._load_checkpoint_dict(d)
+        # Restore lr_scales before rebuilding the optimizer so the group
+        # structure matches what was saved (otherwise load_state_dict crashes
+        # with "different number of parameter groups").
         self._lr_scales   = d.get("_lr_scales",   self._lr_scales)
         self.palr_history = d.get("palr_history", [])
+
+        saved_n_groups = len(d.get("actor_opt", {}).get("param_groups", []))
+        if saved_n_groups > 0 and saved_n_groups != len(self.actor_opt.param_groups):
+            self._apply_per_layer_lr(
+                self.actor.encoder,
+                np.array(self._lr_scales),
+                self.actor_opt,
+            )
+
+        super()._load_checkpoint_dict(d)
 
     # ------------------------------------------------------------------
     @torch.no_grad()
