@@ -108,7 +108,7 @@ def plot():
         color    = COLORS.get(name, "black")
         lw       = LINEWIDTHS.get(name, 1.6)
         ls       = LINESTYLES.get(name, "-")
-        ax.plot(x, sm_mean, label=name, color=color, linestyle=ls, linewidth=lw)
+        ax.plot(x, sm_mean, label=name.replace("PALR", "SPM"), color=color, linestyle=ls, linewidth=lw)
         ax.fill_between(x, sm_mean - sm_std, sm_mean + sm_std,
                         alpha=0.10, color=color)
 
@@ -120,16 +120,16 @@ def plot():
     for i, (s, e) in enumerate(zip(phase_starts, phase_ends)):
         mid = (s + e) / 2
         ax.text(mid, 0.97, PHASE_NAMES[i], ha="center", va="top",
-                fontsize=6.5, color="gray", style="italic", transform=trans)
+                fontsize=6.5, color="#333333", style="italic", fontweight="bold", transform=trans)
 
     ax.set_xlabel("Episode", fontsize=12)
     ax.set_ylabel("Episode Reward (smoothed)", fontsize=12)
-    ax.legend(loc="upper left", fontsize=8, ncol=2)
+    ax.legend(loc="upper left", fontsize=8, ncol=1, bbox_to_anchor=(0, 0.92))
     ax.set_ylim(bottom=0)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
 
-    path = os.path.join(PLOTS_DIR, "fig_cartpole_learning_curves.png")
+    path = os.path.join(PLOTS_DIR, "fig_cartpole_learning_curves_SPM.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved {path}")

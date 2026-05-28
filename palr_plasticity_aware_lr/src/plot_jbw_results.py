@@ -186,8 +186,9 @@ def plot_plasticity(raw):
 
         color = COLORS.get(name, "black")
         lw    = 2.5 if name == "PALR (ours)" else 1.5
-        axes[0].plot(centers, dead_b,  label=name, color=color, linewidth=lw)
-        axes[1].plot(centers, erank_b, label=name, color=color, linewidth=lw)
+        display_name = "SPM" if name == "PALR (ours)" else name
+        axes[0].plot(centers, dead_b,  label=display_name, color=color, linewidth=lw)
+        axes[1].plot(centers, erank_b, label=display_name, color=color, linewidth=lw)
 
     switch_eps = raw[list(raw.keys())[0]][0]["task_switch_episodes"]
     for sw in switch_eps:
@@ -195,7 +196,6 @@ def plot_plasticity(raw):
         axes[1].axvline(sw, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
 
     axes[0].set_ylabel("Dead Neuron Fraction ↓", fontsize=11)
-    axes[0].set_title("JBW Plasticity Dynamics: PALR vs DQN", fontsize=12)
     axes[0].legend(fontsize=9)
     axes[0].set_ylim(bottom=0)
     axes[0].grid(True, alpha=0.3)
@@ -204,7 +204,7 @@ def plot_plasticity(raw):
     axes[1].legend(fontsize=9)
     axes[1].grid(True, alpha=0.3)
     plt.tight_layout()
-    path = os.path.join(PLOTS_DIR, "fig_jbw3_plasticity.png")
+    path = os.path.join(PLOTS_DIR, "fig_jbw3_plasticity_SPM.png")
     plt.savefig(path, dpi=150)
     plt.close()
     print(f"Saved {path}")
