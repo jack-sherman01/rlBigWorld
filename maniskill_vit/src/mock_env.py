@@ -200,6 +200,8 @@ class MockHeterogeneousSkillStream:
         self._step_in_ep           = 0
 
         self._task = self._new_task(0)
+        print(f"[MockEnv] Initialized with {self.n_tasks} tasks, "
+              f"{task_episodes} episodes each, seed={seed}")
 
     def _new_task(self, task_idx: int) -> MockTask:
         name = self.task_sequence[task_idx].replace("-v1", "")
@@ -214,6 +216,12 @@ class MockHeterogeneousSkillStream:
             self.task_idx = (self.task_idx + 1) % self.n_tasks
             self.task_switch_episodes.append(self.episode_count)
             self._task = self._new_task(self.task_idx)
+            print(f"[MockEnv] Task switch → {self.task_sequence[self.task_idx]} "
+                  f"at episode {self.episode_count}")
+
+        if self.episode_count % 10 == 0:
+            print(f"[MockEnv] Episode {self.episode_count} | "
+                  f"task={self.task_sequence[self.task_idx]}")
 
         self.episode_count += 1
         self._step_in_ep    = 0
