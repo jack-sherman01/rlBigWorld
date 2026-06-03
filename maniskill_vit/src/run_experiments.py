@@ -30,6 +30,12 @@ import time
 import numpy as np
 import torch
 
+try:
+    import wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _WANDB_AVAILABLE = False
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from mock_env import MockHeterogeneousSkillStream, MOCK_TASK_SEQUENCE
@@ -114,6 +120,9 @@ def run_one(
     buffer_capacity: int  = 50_000,
     batch_size:      int  = 256,
     obs_size:        int  = 128,
+    use_wandb:       bool = False,
+    wandb_project:   str  = "rlBigWorld-maniskill",
+    wandb_entity:    str  = None,
     **kwargs,
 ) -> dict:
     """
@@ -190,6 +199,32 @@ def run_one(
                        buffer_capacity=buffer_capacity, batch_size=batch_size)
     print(f"  obs_shape={obs_shape}  action_dim={action_dim}  device={device}")
 
+    # ── Wandb ────────────────────────────────────────────────────────────────
+    wb_run = None
+    if use_wandb and _WANDB_AVAILABLE:
+        wb_run = wandb.init(
+            project  = wandb_project,
+            entity   = wandb_entity,
+            name     = f"{agent_name}_seed{seed}{ckpt_suffix}",
+            group    = agent_name,
+            config   = dict(
+                agent_idx        = agent_idx,
+                agent_name       = agent_name,
+                seed             = seed,
+                n_episodes       = n_episodes,
+                task_episodes    = task_episodes,
+                steps_per_ep     = steps_per_ep,
+                lr               = lr,
+                buffer_capacity  = buffer_capacity,
+                batch_size       = batch_size,
+                obs_size         = obs_size,
+                updates_per_step = updates_per_step,
+                warmup_steps     = warmup_steps,
+                use_mock         = use_mock,
+            ),
+            resume = "allow",
+        )
+
     # ── Restore checkpoints and advance env to the correct task ─────────────────
     if start_ep > 0:
         agent.load_weights(ckpt_pt)
@@ -261,6 +296,18 @@ def run_one(
                 f"| dead_L5={dead_l5:.3f} | {elapsed:.0f}s",
                 flush=True,
             )
+            if wb_run is not None:
+                log_dict = {
+                    "episode":       ep,
+                    "mean_reward":   mean_r,
+                    "success_rate":  succ_rate,
+                    "task_idx":      env.current_task_idx,
+                    "elapsed_s":     elapsed,
+                    "step_count":    step_count,
+                }
+                log_dict.update({f"plasticity/{k}": v for k, v in metrics.items()
+                                 if k not in ("episode", "task")})
+                wb_run.log(log_dict, step=ep)
 
         # ── Checkpoint: after each task switch and at the final episode ──────
         if ep in task_switch_eps or ep == n_episodes - 1:
@@ -283,6 +330,8 @@ def run_one(
             print(f"  [ckpt] saved → {os.path.basename(ckpt_pt)}")
 
     env.close()
+    if wb_run is not None:
+        wb_run.finish()
 
     result = {
         agent_name: [{
@@ -332,6 +381,12 @@ def parse_args():
                    help="Fast debug run (50 episodes, 1 seed, 32×32 obs)")
     p.add_argument("--mock",         action="store_true",
                    help="Use mock env (no GPU/ManiSkill needed — pipeline test only)")
+    p.add_argument("--wandb",        action="store_true",
+                   help="Enable Weights & Biases logging")
+    p.add_argument("--wandb_project",type=str, default="rlBigWorld-maniskill",
+                   help="W&B project name")
+    p.add_argument("--wandb_entity", type=str, default=None,
+                   help="W&B entity (team or username)")
     return p.parse_args()
 
 
@@ -379,6 +434,9 @@ def main():
                 buffer_capacity  = buffer_cap,
                 batch_size       = batch_sz,
                 obs_size         = obs_sz,
+                use_wandb        = args.wandb,
+                wandb_project    = args.wandb_project,
+                wandb_entity     = args.wandb_entity,
             )
 
     print("\n=== All runs complete ===")

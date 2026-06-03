@@ -21,10 +21,12 @@ export SINGULARITYENV_PYOPENGL_PLATFORM=egl
 export SINGULARITYENV_EGL_PLATFORM=surfaceless
 export SINGULARITYENV_SAPIEN_HEADLESS=1
 export SINGULARITYENV_TF_FORCE_GPU_ALLOW_GROWTH=true
+export SINGULARITYENV_WANDB_API_KEY=${WANDB_API_KEY}
 
 container_path=/work/hezhang/rlBigWorld/maniskill_vit.sif
 
 module load intel/singularity/singularity-4.2.2
+source ~/.wandb_secrets 2>/dev/null || true
 
 WORKDIR=/work/hezhang/rlBigWorld
 echo "[$(date)] WORKDIR=${WORKDIR}  agent=2 (SAC-ShrinkPerturb)"
@@ -45,7 +47,9 @@ run_one() {
                 --agent_idx 2 \
                 --episodes ${EPISODES:-400} \
                 --task_episodes ${TASK_EPS:-100} \
-                --ckpt_suffix _full_seed${seed}_agent2
+                --ckpt_suffix _full_seed${seed}_agent2 \
+                --wandb \
+                --wandb_project rlBigWorld-maniskill
         " > logs/agent2_seed${seed}.log 2>&1
     echo "[$(date)] DONE  agent=2 seed=${seed} gpu=${gpu}"
 }
