@@ -36,7 +36,8 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 
 from cw_env import ContinualWorld, CW10_TASKS, CW20_TASKS
 from sac_base import SACAgent
-from cw_baselines import SACShinkAndPerturbAgent, SACPeriodicResetAgent, SACL2RegAgent
+from cw_baselines import (SACShinkAndPerturbAgent, SACPeriodicResetAgent,
+                          SACL2RegAgent, CBPSACAgent, SACReDo)
 from palr_sac_agent import PALRSACAgent
 from plasticity_metrics import compute_all_metrics
 from palr_sac_agent import CW_HIDDEN_INDICES
@@ -69,18 +70,37 @@ def make_agents(obs_dim: int, action_dim: int, seed: int,
                                 shrink_alpha=0.9, sigma=0.01, **common),
         SACPeriodicResetAgent(seed=seed, reset_freq=20, **common),
         SACL2RegAgent(seed=seed, l2_coeff=1e-4, **common),
-        # PALR full
+        # PALR full (best config: beta=0, perturbation-only on CW10) — index 4
+        PALRSACAgent(base_lr=3e-4, seed=seed, beta=0.0, rank_beta=1.5,
+                     measure_freq=500, perturb_threshold=0.05,
+                     perturb_sigma=0.5, **common),
+        # Ablation: LR scaling only — index 5
         PALRSACAgent(base_lr=3e-4, seed=seed, beta=3.0, rank_beta=1.5,
-                     measure_freq=500, perturb_threshold=0.10,
-                     perturb_sigma=0.3, **common),
-        # Ablation: LR scaling only
-        PALRSACAgent(base_lr=3e-4, seed=seed, beta=3.0, rank_beta=1.5,
-                     measure_freq=500, perturb_threshold=0.10,
+                     measure_freq=500, perturb_threshold=0.05,
                      no_perturb=True, **common),
-        # Ablation: perturbation only
+        # Ablation: perturbation only — index 6
+        PALRSACAgent(base_lr=3e-4, seed=seed, beta=0.0, rank_beta=1.5,
+                     measure_freq=500, perturb_threshold=0.05,
+                     perturb_sigma=0.5, no_scale=True, **common),
+        # CBP baseline (Continual Backprop, Dohare et al. 2024) — index 7
+        CBPSACAgent(seed=seed, replacement_rate=1e-4, decay_rate=0.99,
+                    maturity_thresh=100, **common),
+        # ReDo baseline (dormant-neuron recycling, Sokar et al. 2023) — index 8
+        SACReDo(seed=seed, recycle_freq=1000, dormancy_threshold=0.025, **common),
+        # PALR-SAC with LR scaling ON (beta=3.0) — revision ablation — index 9
         PALRSACAgent(base_lr=3e-4, seed=seed, beta=3.0, rank_beta=1.5,
-                     measure_freq=500, perturb_threshold=0.10,
-                     perturb_sigma=0.3, no_scale=True, **common),
+                     measure_freq=500, perturb_threshold=0.05,
+                     perturb_sigma=0.5, **common),
+        # PALR-SAC without task-switch oracle — revision ablation — index 10
+        PALRSACAgent(base_lr=3e-4, seed=seed, beta=0.0, rank_beta=1.5,
+                     measure_freq=500, perturb_threshold=0.05,
+                     perturb_sigma=0.5, no_oracle=True, **common),
+        # PALR-SAC with reward-drop pseudo-oracle — index 11
+        PALRSACAgent(base_lr=3e-4, seed=seed, beta=0.0, rank_beta=1.5,
+                     measure_freq=500, perturb_threshold=0.05,
+                     perturb_sigma=0.5, no_oracle=True, auto_oracle=True,
+                     auto_short_window=10, auto_long_window=30,
+                     auto_drop_threshold=0.5, auto_cooldown=100, **common),
     ]
 
 

@@ -65,6 +65,12 @@ class PALRSACAgent(SACAgent):
         perturb_sigma: float = 0.3,
         no_scale: bool = False,
         no_perturb: bool = False,
+        no_oracle: bool = False,
+        auto_oracle: bool = False,
+        auto_short_window: int = 10,
+        auto_long_window: int = 30,
+        auto_drop_threshold: float = 0.5,
+        auto_cooldown: int = 100,
         **kwargs,
     ):
         kwargs.pop("lr", None)   # base_lr takes precedence over any lr in **kwargs
@@ -77,6 +83,16 @@ class PALRSACAgent(SACAgent):
         self.perturb_sigma     = perturb_sigma
         self.no_scale          = no_scale
         self.no_perturb        = no_perturb
+        self.no_oracle         = no_oracle
+        self.auto_oracle       = auto_oracle
+
+        # Auto-oracle: reward-drop task-switch detector
+        self._auto_short_window    = auto_short_window
+        self._auto_long_window     = auto_long_window
+        self._auto_drop_threshold  = auto_drop_threshold
+        self._auto_cooldown        = auto_cooldown
+        self._auto_reward_history: list = []
+        self._auto_cooldown_counter: int = 0
 
         n_hidden = len(CW_HIDDEN_INDICES)
         self.lr_scales = np.ones(n_hidden, dtype=np.float32)
@@ -95,6 +111,12 @@ class PALRSACAgent(SACAgent):
             self.name = "PALR-SAC-NoScale"
         elif no_perturb:
             self.name = "PALR-SAC-NoPerturb"
+        elif auto_oracle:
+            self.name = "PALR-SAC-AutoOracle"
+        elif no_oracle:
+            self.name = "PALR-SAC-NoOracle"
+        elif beta > 0.0:
+            self.name = "PALR-SAC-BetaOn"
         else:
             self.name = "PALR-SAC (ours)"
 
@@ -235,14 +257,47 @@ class PALRSACAgent(SACAgent):
         """
         Called at each detected task switch. Proactively boosts LR and
         perturbs dead neurons before the first gradient step on the new task.
+        Disabled when no_oracle=True (task-switch signal not used).
         """
+        if self.no_oracle or len(self.buffer) < self.batch_size:
+            return
+        self._do_reset_plasticity_baseline()
+
+    def _do_reset_plasticity_baseline(self):
+        """Internal implementation — called directly by auto_oracle path."""
         if len(self.buffer) < self.batch_size:
             return
-
         obs_b, act_b, _, _, _ = self.buffer.sample(min(512, len(self.buffer)))
-
         for k in range(len(CW_HIDDEN_INDICES)):
             if not self.no_scale:
                 self.lr_scales[k] = max(self.lr_scales[k], 2.0)
             if not self.no_perturb:
                 self._targeted_perturbation(k, obs_b, act_b)
+
+    def on_episode_end(self, episode_reward: float):
+        """Override to add reward-drop task-switch detection (auto_oracle mode)."""
+        super().on_episode_end(episode_reward)
+        if not self.auto_oracle:
+            return
+
+        self._auto_reward_history.append(episode_reward)
+        if self._auto_cooldown_counter > 0:
+            self._auto_cooldown_counter -= 1
+            return
+
+        n_short = self._auto_short_window
+        n_long  = self._auto_long_window
+
+        # Need enough history for both windows
+        if len(self._auto_reward_history) < n_short + n_long:
+            return
+
+        short_mean = np.mean(self._auto_reward_history[-n_short:])
+        long_mean  = np.mean(self._auto_reward_history[-(n_short + n_long):-n_short])
+
+        # Detect significant drop relative to recent baseline
+        if long_mean > 1e-3 and short_mean < self._auto_drop_threshold * long_mean:
+            self._do_reset_plasticity_baseline()
+            self._auto_cooldown_counter = self._auto_cooldown
+            # Clear history after trigger to reset detection baseline
+            self._auto_reward_history = []
